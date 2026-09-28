@@ -1,0 +1,497 @@
+drm/panel: Add Samsung AMB670YF07 DSI panel driver
+
+From: ynk <evils.ynk@gmail.com>
+
+Signed-off-by: ynk <evils.ynk@gmail.com>
+---
+ Documentation/devicetree/bindings/arm/qcom.yaml  |    1 
+ arch/arm64/boot/dts/qcom/Makefile                |    1 
+ drivers/gpu/drm/panel/Kconfig                    |   10 +
+ drivers/gpu/drm/panel/Makefile                   |    1 
+ drivers/gpu/drm/panel/panel-samsung-amb670yf07.c |  420 ++++++++++++++++++++++
+ 5 files changed, 433 insertions(+)
+ create mode 100644 drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
+
+diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
+index ff8a35df7862..df28d5b98f1a 100644
+--- a/Documentation/devicetree/bindings/arm/qcom.yaml
++++ b/Documentation/devicetree/bindings/arm/qcom.yaml
+@@ -1131,6 +1131,7 @@ properties:
+ 
+       - items:
+           - enum:
++              - oneplus,salami
+               - qcom,sm8550-hdk
+               - qcom,sm8550-mtp
+               - qcom,sm8550-qrd
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 1c86e7e98f55..88b8c72bdd75 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -391,6 +391,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-hdk-display-card.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-hdk-rear-camera-card.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-mtp.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-oneplus-salami.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-qrd.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-samsung-q5q.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-sony-xperia-yodo-pdx234.dtb
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index cbdf7b8f7f7a..89dff6a249bf 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -886,6 +886,16 @@ config DRM_PANEL_RONBO_RB070D30
+ 	  Say Y here if you want to enable support for Ronbo Electronics
+ 	  RB070D30 1024x600 DSI panel.
+ 
++config DRM_PANEL_SAMSUNG_AMB670YF07
++	tristate "Samsung AMB670YF07 CS DSC command mode panel (OnePlus 11)"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	help
++	  Say Y here if you want to enable support for the Samsung
++	  AMB670YF07 CS 1080x2412 (also 1440x3216) DSC command-mode AMOLED
++	  panel as found on the OnePlus 11 (salami).
++
+ config DRM_PANEL_SAMSUNG_AMS581VF01
+ 	tristate "Samsung AMS581VF01 panel"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 3b523cf37833..f77597f8df9a 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -86,6 +86,7 @@ obj-$(CONFIG_DRM_PANEL_RENESAS_R61307) += panel-renesas-r61307.o
+ obj-$(CONFIG_DRM_PANEL_RENESAS_R63419) += panel-renesas-r63419.o
+ obj-$(CONFIG_DRM_PANEL_RENESAS_R69328) += panel-renesas-r69328.o
+ obj-$(CONFIG_DRM_PANEL_RONBO_RB070D30) += panel-ronbo-rb070d30.o
++obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMB670YF07) += panel-samsung-amb670yf07.o
+ obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMS581VF01) += panel-samsung-ams581vf01.o
+ obj-$(CONFIG_DRM_PANEL_SAMSUNG_AMS639RQ08) += panel-samsung-ams639rq08.o
+ obj-$(CONFIG_DRM_PANEL_SAMSUNG_ATNA33XC20) += panel-samsung-atna33xc20.o
+diff --git a/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c b/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
+new file mode 100644
+index 000000000000..973ec1618bf1
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
+@@ -0,0 +1,420 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Samsung AMB670YF07 CS (OnePlus 11 / salami) 1080x2412@120 DSC cmd-mode panel.
++ * Init sequence ported from the vendor (Oplus) device tree.
++ * Modelled on panel-raydium-rm692e5.c / panel-samsung-sofef00.c.
++ */
++
++#include <linux/backlight.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/display/drm_dsc.h>
++#include <drm/display/drm_dsc_helper.h>
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++
++struct amb670yf07_panel {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct drm_dsc_config dsc;
++	struct regulator_bulk_data supplies[2];
++	struct gpio_desc *reset_gpio;
++	bool prepared;
++};
++
++static inline struct amb670yf07_panel *to_amb670yf07_panel(struct drm_panel *panel)
++{
++	return container_of(panel, struct amb670yf07_panel, panel);
++}
++
++static void amb670yf07_reset(struct amb670yf07_panel *ctx)
++{
++	/*
++	 * reset-gpios 为 GPIO_ACTIVE_LOW，最终必须停在逻辑 0（物理高=释放复位），
++	 * 否则面板停在复位态、不响应任何 DCS 命令（黑屏）。
++	 * 与下游 qcom,mdss-dsi-reset-sequence = <1 10>, <0 5>, <1 10>
++	 * （物理高 10ms -> 低 5ms -> 高 10ms）一致。
++	 */
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	usleep_range(5000, 6000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++}
++
++static void amb670yf07_on(struct amb670yf07_panel *ctx,
++			  struct mipi_dsi_multi_context *dsi_ctx)
++{
++	struct drm_dsc_picture_parameter_set pps;
++
++	dsi_ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x9e, 0x11, 0x00, 0x00, 0xab, 0x30, 0x80, 0x09, 0x6c, 0x04, 0x38, 0x00, 0x24, 0x02, 0x1c, 0x02, 0x1c, 0x02, 0x00, 0x02, 0x3b, 0x00, 0x20, 0x03, 0x35, 0x00, 0x07, 0x00, 0x0e, 0x03, 0x34, 0x02, 0xd4, 0x18, 0x00, 0x10, 0xf0, 0x07, 0x10, 0x20, 0x00, 0x06, 0x0f, 0x0f, 0x33, 0x0e, 0x1c, 0x2a, 0x38, 0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79, 0x7b, 0x7d, 0x7e, 0x02, 0x02, 0x22, 0x00, 0x2a, 0x40, 0x2a, 0xbe, 0x3a, 0xfc, 0x3a, 0xfa, 0x3a, 0xf8, 0x3b, 0x38, 0x3b, 0x78, 0x3b, 0xb6, 0x4b, 0xb6, 0x4b, 0xf4, 0x4b, 0xf4, 0x6c, 0x34, 0x84, 0x74, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x9d, 0x01);
++	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
++	mipi_dsi_picture_parameter_set_multi(dsi_ctx, &pps);
++	mipi_dsi_compression_mode_ext_multi(dsi_ctx, true, MIPI_DSI_COMPRESSION_DSC, 0);
++	mipi_dsi_msleep(dsi_ctx, 20);
++	mipi_dsi_dcs_exit_sleep_mode_multi(dsi_ctx);
++	mipi_dsi_msleep(dsi_ctx, 12);
++	/*
++	 * 实际面板为 AMB670YF07 CS（原厂 Android 日志证实）：YF07 的 on-command
++	 * 不含 YF08 的 FFC(C5) 块与假帧(fake frame)块；且乱写 C5 可能干扰
++	 * YF07 内部 DCDC，故不发送（对应 yf07-cs dtsi 的 on-command）。
++	 */
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x22, 0xb9);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb9, 0xa1, 0xb1);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x3a, 0xb9);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb9, 0x02);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x26, 0xb9);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb9, 0x00, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf7, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x24, 0xb9);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb9, 0x21);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x38, 0xb9);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb9, 0x02);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x2a, 0xb9);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb9, 0x00, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf7, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_msleep(dsi_ctx, 121);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbd, 0x21);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x16, 0xf2);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf2, 0x1b, 0x50);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x08, 0xcb);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xcb, 0x24);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x60, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x10, 0xbd);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbd, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x16, 0xbd);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbd, 0x77);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x14, 0xbd);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbd, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x63, 0xcb);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xcb, 0x08);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf7, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbd, 0x23, 0x02);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf2, 0x00, 0x01);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x35, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb9, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x2a, 0x00, 0x00, 0x04, 0x37);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x2b, 0x00, 0x00, 0x09, 0x6b);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xc3, 0x89);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x24, 0xc3);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xc3, 0xfd, 0x00, 0xfd, 0x00, 0xfd, 0x00, 0xfd, 0x00, 0xfd, 0x00, 0xfd, 0x00, 0xfd, 0x00, 0xfd, 0x00, 0xfd);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x3a, 0xc3);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xc3, 0xb0, 0x00, 0xb0, 0x00, 0xb0, 0x00, 0xb0, 0x00, 0xb0, 0x00, 0xb0, 0x00, 0xb0, 0x00, 0xb0, 0x00, 0xb0);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x50, 0xc3);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xc3, 0x43, 0x00, 0x43, 0x00, 0x43, 0x00, 0x43, 0x00, 0x43, 0x00, 0x43, 0x00, 0x43, 0x00, 0x43, 0x00, 0x43);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x61, 0xc3);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xc3, 0xcc, 0xcc, 0xcc, 0xcc, 0xc0, 0xfe, 0x00, 0xfe, 0x00, 0xfe, 0x00, 0xfe, 0x00, 0xfe, 0x00, 0xfe, 0x00, 0xfe, 0x00, 0xfe, 0x00, 0xfe);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x2b, 0xf6);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf6, 0x60, 0x63, 0x69);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf7, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x46, 0xf4);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf4, 0x08);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x18, 0xb1);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb1, 0x05);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x0d, 0x63);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x63, 0x01);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x0c, 0x63);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x63, 0x20);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x53, 0x28);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf7, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x55, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x52, 0x1f);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x1f, 0x02);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xb0, 0x00, 0x54, 0x1f);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x1f, 0x00);
++	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_set_display_on_multi(dsi_ctx);
++}
++
++static int amb670yf07_disable(struct drm_panel *panel)
++{
++	struct amb670yf07_panel *ctx = to_amb670yf07_panel(panel);
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
++	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 100);
++
++	return dsi_ctx.accum_err;
++}
++
++static int amb670yf07_prepare(struct drm_panel *panel)
++{
++	struct amb670yf07_panel *ctx = to_amb670yf07_panel(panel);
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->prepared = true;
++
++	dsi_ctx.accum_err = regulator_bulk_enable(ARRAY_SIZE(ctx->supplies),
++						  ctx->supplies);
++	if (dsi_ctx.accum_err)
++		return dsi_ctx.accum_err;
++
++	amb670yf07_reset(ctx);
++
++	/* 面板硬件识别（host 已使能，可读）：确认实际面板型号 */
++	{
++		u8 id = 0;
++		int r;
++		int regs[] = { 0x04, 0xda, 0xdb, 0xdc, 0xa1 };
++		unsigned int i;
++
++		ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++		for (i = 0; i < ARRAY_SIZE(regs); i++) {
++			r = mipi_dsi_dcs_read(ctx->dsi, regs[i], &id, 1);
++			dev_info(&ctx->dsi->dev,
++				 "panel-id DCS 0x%02x -> ret=%d val=0x%02x\n",
++				 regs[i], r, r > 0 ? id : 0);
++		}
++		ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++	}
++
++	amb670yf07_on(ctx, &dsi_ctx);
++
++	if (dsi_ctx.accum_err) {
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++		ctx->prepared = false;
++	} else {
++		/*
++		 * DBV(0x51) 必须在面板 on 之后重写一次。
++		 * backlight 设备在 probe 阶段注册时会写一次 DBV，但那时面板还没
++		 * on（reset 后 DBV 默认值接近"灭"），那次写入无效 —— 外部表现就是
++		 * "面板通信已通、DSI-1 enabled，但屏幕不发光"，必须由用户态再 echo
++		 * 一次 brightness 才亮。这里在 prepare 完成、display_on 之后补写，
++		 * 让点亮过程在内核内自足（rootfs 场景无需任何用户态干预）。
++		 */
++		backlight_update_status(ctx->panel.backlight);
++	}
++
++	return dsi_ctx.accum_err;
++}
++
++static int amb670yf07_unprepare(struct drm_panel *panel)
++{
++	struct amb670yf07_panel *ctx = to_amb670yf07_panel(panel);
++
++	ctx->prepared = false;
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++
++	return 0;
++}
++
++static const struct drm_display_mode amb670yf07_mode = {
++	.clock = (1202 * 2424 * 120) / 1000,
++	.hdisplay = 1080,
++	.hsync_start = 1080 + 64,
++	.hsync_end = 1080 + 64 + 8,
++	.htotal = 1202,
++	.vdisplay = 2412,
++	.vsync_start = 2412 + 2,
++	.vsync_end = 2412 + 2 + 2,
++	.vtotal = 2424,
++	.width_mm = 68,
++	.height_mm = 154,
++};
++
++static int amb670yf07_get_modes(struct drm_panel *panel,
++				struct drm_connector *connector)
++{
++	struct drm_display_mode *mode;
++
++	mode = drm_mode_duplicate(connector->dev, &amb670yf07_mode);
++	if (!mode)
++		return -ENOMEM;
++
++	drm_mode_set_name(mode);
++	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
++	connector->display_info.width_mm = mode->width_mm;
++	connector->display_info.height_mm = mode->height_mm;
++	drm_mode_probed_add(connector, mode);
++
++	return 1;
++}
++
++static const struct drm_panel_funcs amb670yf07_panel_funcs = {
++	.prepare = amb670yf07_prepare,
++	.unprepare = amb670yf07_unprepare,
++	.disable = amb670yf07_disable,
++	.get_modes = amb670yf07_get_modes,
++};
++
++static int amb670yf07_bl_update_status(struct backlight_device *bl)
++{
++	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	/*
++	 * DBV(0x51) 实测为 **11 位有效**（0..2047，值越大越亮），且面板在
++	 * "低 11 位 = 0" 时完全不发光。
++	 *
++	 * 此前按 12 位 + 反相（DBV = 4095 - level）计算，level=2047 时
++	 * DBV=2048 → 低 11 位归零 → 屏幕全黑，必须由用户态改写成 1
++	 * （DBV=4094 → 低 11 位 2046）才亮。实测判定（同一面板 on 状态下）：
++	 *   level=1    -> DBV 4094 -> low11 2046 -> 亮（最亮）
++	 *   level=2047 -> DBV 2048 -> low11 0    -> 灭
++	 *   level=2048 -> DBV 2047 -> low11 2047 -> 亮（最亮）
++	 * 故改为正相直传：level 即 DBV，范围 0..2047。
++	 */
++	u16 brightness = backlight_get_brightness(bl);
++	int ret;
++
++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
++	if (ret < 0)
++		return ret;
++
++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	return 0;
++}
++
++static const struct backlight_ops amb670yf07_bl_ops = {
++	.update_status = amb670yf07_bl_update_status,
++};
++
++static struct backlight_device *
++amb670yf07_create_backlight(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	const struct backlight_properties props = {
++		.type = BACKLIGHT_RAW,
++		/*
++		 * DBV 实测为 11 位：0..2047，值越大越亮，0 = 灭。
++		 * 默认取最亮，保证 prepare 之后无需任何用户态干预即可看到画面
++		 * （rootfs 场景）；用户态可往小调暗。
++		 */
++		.brightness = 2047,
++		.max_brightness = 2047,
++	};
++
++	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
++					      &amb670yf07_bl_ops, &props);
++}
++
++static int amb670yf07_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct amb670yf07_panel *ctx;
++	int ret;
++
++	ctx = devm_drm_panel_alloc(dev, struct amb670yf07_panel, panel,
++				   &amb670yf07_panel_funcs,
++				   DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ctx->supplies[0].supply = "vddio";
++	ctx->supplies[1].supply = "vci";
++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ctx->supplies),
++				      ctx->supplies);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "Failed to get regulators\n");
++
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "Failed to get reset-gpios\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET |
++			  MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM;
++
++	ctx->panel.prepare_prev_first = true;
++
++	ctx->panel.backlight = amb670yf07_create_backlight(dsi);
++	if (IS_ERR(ctx->panel.backlight))
++		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
++				     "Failed to create backlight\n");
++
++	drm_panel_add(&ctx->panel);
++
++	/* This panel only supports DSC; unconditionally enable it */
++	dsi->dsc = &ctx->dsc;
++	ctx->dsc.dsc_version_major = 1;
++	ctx->dsc.dsc_version_minor = 1;
++	ctx->dsc.slice_height = 36;
++	ctx->dsc.slice_width = 540;
++	ctx->dsc.slice_count = 1080 / ctx->dsc.slice_width;
++	ctx->dsc.bits_per_component = 10;
++	ctx->dsc.bits_per_pixel = 8 << 4; /* 4 fractional bits */
++	ctx->dsc.block_pred_enable = true;
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		dev_err(dev, "Failed to attach to DSI host: %d\n", ret);
++		drm_panel_remove(&ctx->panel);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void amb670yf07_remove(struct mipi_dsi_device *dsi)
++{
++	struct amb670yf07_panel *ctx = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	ret = mipi_dsi_detach(dsi);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
++
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id amb670yf07_of_match[] = {
++	{ .compatible = "samsung,amb670yf07-cs" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, amb670yf07_of_match);
++
++static struct mipi_dsi_driver amb670yf07_driver = {
++	.probe = amb670yf07_probe,
++	.remove = amb670yf07_remove,
++	.driver = {
++		.name = "panel-samsung-amb670yf07",
++		.of_match_table = amb670yf07_of_match,
++	},
++};
++module_mipi_dsi_driver(amb670yf07_driver);
++
++MODULE_DESCRIPTION("DRM panel driver for Samsung AMB670YF07 (OnePlus 11)");
++MODULE_LICENSE("GPL");

@@ -1,0 +1,265 @@
+soc: qcom: Add bootloader log driver
+
+From: ynk <evils.ynk@gmail.com>
+
+Signed-off-by: ynk <evils.ynk@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |   21 +++
+ arch/arm64/configs/salami_defconfig                |    1 
+ drivers/soc/qcom/Kconfig                           |    9 +
+ drivers/soc/qcom/Makefile                          |    1 
+ drivers/soc/qcom/bootloader_log.c                  |  137 ++++++++++++++++++++
+ 5 files changed, 166 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/soc/qcom/bootloader_log.c
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+index 6a3af3931880..7849b8391997 100644
+--- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
++++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+@@ -78,6 +78,10 @@ pmic_glink_ss_in: endpoint {
+ };
+ 
+ reserved-memory {
++    bootloader_log_mem: bootloader-log-mem@a7605000 {
++        no-map;
++        reg = <0x00 0xa7605000 0x00 0x8000>;
++    };
+     chipinfo-region@81cf4000 {
+         no-map;
+         reg = <0x00 0x81cf4000 0x00 0x1000>;
+@@ -108,6 +112,11 @@ ramoops@bffdc0000 {
+     };
+ };
+ 
++bootloader-log {
++    compatible = "oplus,bootloader-log", "bootloader_log";
++    linux,contiguous-region = <&bootloader_log_mem>;
++};
++
+ vph_pwr: vph-pwr-regulator {
+     compatible = "regulator-fixed";
+     regulator-always-on;
+@@ -120,7 +129,7 @@ vph_pwr: vph-pwr-regulator {
+ wcn7850-pmu {
+     bt-enable-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
+     compatible = "qcom,wcn7850-pmu";
+-    pinctrl-0 = <&wlan_en_default>, <&bt_en_default>, <&pmk8550_sleep_clk>;
++    pinctrl-0 = <&wlan_en_default>, <&bt_en_default>, <&sw_ctrl_default>, <&pmk8550_sleep_clk>;
+     pinctrl-names = "default";
+     vdd-supply = <&vreg_s5g_0p8>;
+     vddaon-supply = <&vreg_s2g_0p8>;
+@@ -534,6 +543,12 @@ wlan_en_default: wlan-en-default-state {
+         function = "gpio";
+         pins = "gpio80";
+     };
++
++    sw_ctrl_default: sw-ctrl-default-state {
++        bias-pull-down;
++        function = "gpio";
++        pins = "gpio82";
++    };
+ };
+ 
+ &pm8550b_eusb2_repeater {
+@@ -597,12 +612,12 @@ &pcie1 {
+     perst-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
+     pinctrl-0 = <&pcie1_default_state>;
+     pinctrl-names = "default";
+-    status = "okay";
++    status = "disabled";
+     wake-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
+ };
+ 
+ &pcie1_phy {
+-    status = "okay";
++    status = "disabled";
+     vdda-phy-supply = <&vreg_l3c_0p91>;
+     vdda-pll-supply = <&vreg_l3e_1p2>;
+     vdda-qref-supply = <&vreg_l1e_0p88>;
+diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
+index 2cb1af7d4e84..e53f1b37498f 100644
+--- a/arch/arm64/configs/salami_defconfig
++++ b/arch/arm64/configs/salami_defconfig
+@@ -890,6 +890,7 @@ CONFIG_RPMSG_QCOM_SMD=y
+ CONFIG_RPMSG_VIRTIO=y
+ CONFIG_QCOM_CPR=y
+ CONFIG_QCOM_RPMHPD=y
++CONFIG_QCOM_BOOTLOADER_LOG=y
+ CONFIG_QCOM_RPMPD=y
+ CONFIG_QCOM_SPMI_VADC=y
+ CONFIG_QCOM_SPMI_ADC5=y
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+index 2b524154d9fb..5a67815ac531 100644
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -15,6 +15,15 @@ menuconfig QCOM_SOC
+ 
+ if QCOM_SOC
+ 
++config QCOM_BOOTLOADER_LOG
++	tristate "Qualcomm bootloader log buffer reader"
++	depends on OF
++	help
++	  Maps the bootloader (ABL)-reserved log buffer and exposes it via
++	  /proc/bootloader_log. Ported from the oplus vendor tree; requires a
++	  DT node with compatible = "bootloader_log" and a
++	  linux,contiguous-region reference to the reserved memory region.
++
+ config QCOM_AOSS_QMP
+ 	tristate "Qualcomm AOSS Driver"
+ 	depends on MAILBOX
+diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
+index 798643be3590..2414ec443623 100644
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ CFLAGS_rpmh-rsc.o := -I$(src)
+ CFLAGS_qcom_aoss.o := -I$(src)
++obj-$(CONFIG_QCOM_BOOTLOADER_LOG) += bootloader_log.o
+ obj-$(CONFIG_QCOM_AOSS_QMP) +=	qcom_aoss.o
+ obj-$(CONFIG_QCOM_GENI_SE) +=	qcom-geni-se.o
+ obj-$(CONFIG_QCOM_COMMAND_DB) += cmd-db.o
+diff --git a/drivers/soc/qcom/bootloader_log.c b/drivers/soc/qcom/bootloader_log.c
+new file mode 100644
+index 000000000000..1c4d86fdb2ab
+--- /dev/null
++++ b/drivers/soc/qcom/bootloader_log.c
+@@ -0,0 +1,137 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Bootloader log reader for Qualcomm devices with oplus ABL.
++ *
++ * Maps the ABL-reserved log buffer and exposes it as /proc/bootloader_log.
++ * Ported from oplus vendor tree (vendor/oplus/kernel/boot/misc/bootloader_log.c).
++ *
++ * Copyright (C) 2018-2020 Oplus. All rights reserved.
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only as
++ * published by the Free Software Foundation.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/io.h>
++#include <linux/ioport.h>
++#include <linux/of_address.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++
++struct bootloader_log_ram_zone {
++	phys_addr_t paddr;
++	size_t size;
++	void *vaddr;
++};
++
++static struct bootloader_log_ram_zone blrz;
++static struct proc_dir_entry *bootloader_log_proc_entry;
++
++static int bootloader_log_proc_show(struct seq_file *m, void *v)
++{
++	if (!blrz.vaddr)
++		return -ENODEV;
++
++	seq_puts(m, blrz.vaddr);
++	seq_putc(m, '\n');
++	return 0;
++}
++
++static int bootloader_log_proc_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, bootloader_log_proc_show, NULL);
++}
++
++static const struct proc_ops bootloader_log_proc_fops = {
++	.proc_open	= bootloader_log_proc_open,
++	.proc_read	= seq_read,
++	.proc_lseek	= seq_lseek,
++	.proc_release	= single_release,
++};
++
++static int bootloader_log_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node;
++	struct device_node *pnode;
++	struct resource res;
++	int ret;
++
++	pnode = of_parse_phandle(np, "linux,contiguous-region", 0);
++	if (!pnode) {
++		dev_err(dev, "mem reservation for bootloader log not present\n");
++		return -EINVAL;
++	}
++
++	ret = of_address_to_resource(pnode, 0, &res);
++	of_node_put(pnode);
++	if (ret) {
++		dev_err(dev, "failed to parse the bootloader log memory region\n");
++		return ret;
++	}
++
++	blrz.paddr = res.start;
++	blrz.size = resource_size(&res);
++
++	/*
++	 * The reserved-memory node is marked no-map, so map it here.
++	 * Use write-combine so the buffer stays cacheable-ish but is
++	 * safe to read without explicit cache maintenance.
++	 */
++	blrz.vaddr = memremap(blrz.paddr, blrz.size, MEMREMAP_WC);
++	if (!blrz.vaddr) {
++		dev_err(dev, "failed to map 0x%pa (%zu bytes)\n",
++			&blrz.paddr, blrz.size);
++		return -ENOMEM;
++	}
++
++	/* NUL-terminate in case the log fills the buffer completely. */
++	((char *)blrz.vaddr)[blrz.size - 1] = '\0';
++
++	bootloader_log_proc_entry =
++		proc_create("bootloader_log", 0444, NULL,
++			    &bootloader_log_proc_fops);
++	if (!bootloader_log_proc_entry) {
++		dev_err(dev, "failed to create /proc/bootloader_log\n");
++		memunmap(blrz.vaddr);
++		blrz.vaddr = NULL;
++		return -ENOMEM;
++	}
++
++	dev_info(dev, "mapped 0x%pa (%zu bytes) -> /proc/bootloader_log\n",
++		 &blrz.paddr, blrz.size);
++	return 0;
++}
++
++static void bootloader_log_remove(struct platform_device *pdev)
++{
++	proc_remove(bootloader_log_proc_entry);
++	bootloader_log_proc_entry = NULL;
++	memunmap(blrz.vaddr);
++	blrz.vaddr = NULL;
++}
++
++static const struct of_device_id bootloader_log_of_match[] = {
++	{ .compatible = "oplus,bootloader-log" },
++	{ .compatible = "bootloader_log" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, bootloader_log_of_match);
++
++static struct platform_driver bootloader_log_driver = {
++	.probe	= bootloader_log_probe,
++	.remove	= bootloader_log_remove,
++	.driver	= {
++		.name	= "bootloader_log",
++		.of_match_table = bootloader_log_of_match,
++	},
++};
++
++module_platform_driver(bootloader_log_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Qualcomm oplus ABL bootloader log reader (/proc/bootloader_log)");
++MODULE_AUTHOR("software@oneplus.cn");

@@ -1,0 +1,12 @@
+# This series applies on Git commit 5fc5768c7ca92895ccd1de94dc521e5a55ae7896
+0001-appended-dtb.patch
+0002-panel-amb670yf07.patch
+0003-dts-defconfig-baseline.patch
+0004-bootloader-log.patch
+0005-dts-powerkey-localversion.patch
+0006-touchscreen-synaptics-tcm.patch
+0007-panel-amb670yf0x.patch
+0008-defconfig-trim.patch
+0009-pcie-qcom-ath12k-fix.patch
+0010-defconfig-cmdline-pas.patch
+0011-dts-audio-hall-cache.patch

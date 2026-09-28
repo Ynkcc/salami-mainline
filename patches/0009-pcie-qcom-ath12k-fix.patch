@@ -1,0 +1,215 @@
+PCI: qcom: Fix ath12k WiFi bring-up on SM8550
+
+From: ynk <evils.ynk@gmail.com>
+
+修复 iommu-map 解析以支持可变 cells。根据 IOMMU 的 #iommu-cells 动态推导 iommu-map 步长，避免固定 4 cell 解析导致后续条目错位并使端点 BDF 丢失。
+
+同时为 ath12k 添加从 DT 读取 MAC 地址的支持，并在 OnePlus 11 (salami) 上禁用未接线的 rfkill 引脚，添加占位 MAC。
+
+Signed-off-by: ynk <evils.ynk@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |    2 
+ drivers/net/wireless/ath/ath12k/mac.c              |   12 +++
+ drivers/net/wireless/ath/ath12k/wifi7/hw.c         |    8 ++
+ drivers/pci/controller/dwc/pcie-qcom.c             |   91 ++++++++++++++++----
+ 4 files changed, 93 insertions(+), 20 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+index 64aff3f170c7..ea1704be4934 100644
+--- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
++++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+@@ -606,6 +606,8 @@ wifi@0 {
+         compatible = "pci17cb,1107";
+         reg = <0x10000 0x0 0x0 0x0 0x0>;
+         status = "okay";
++        /* placeholder locally-administered MAC; replace with the label MAC if found */
++        local-mac-address = [7a 7a 7a 7a 7a 7a];
+         vddaon-supply = <&vreg_pmu_aon_0p59>;
+         vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
+         vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 99bf5cf79d10..676532f487da 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -7,6 +7,7 @@
+ #include <net/mac80211.h>
+ #include <net/cfg80211.h>
+ #include <linux/etherdevice.h>
++#include <linux/of_net.h>
+ 
+ #include "mac.h"
+ #include "core.h"
+@@ -14828,6 +14829,17 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+ 			ar->mac_addr[4] += ar->pdev_idx;
+ 		}
+ 
++		/*
++		 * salami: prefer a DT-provided MAC (wifi@0 node's
++		 * local-mac-address). The firmware reports all-zero when no
++		 * per-device MAC is found in the board data / OTP.
++		 */
++		u8 dt_mac_buf[ETH_ALEN];
++
++		if (!of_get_mac_address(ab->dev->of_node, dt_mac_buf) &&
++		    is_valid_ether_addr(dt_mac_buf))
++			ether_addr_copy(ar->mac_addr, dt_mac_buf);
++
+ 		ret = ath12k_mac_setup_register(ar, &ht_cap_info, hw->wiphy->bands);
+ 		if (ret)
+ 			goto err_cleanup_unregister;
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hw.c b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+index 7b86f324b2e6..dea73fb0febf 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/hw.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+@@ -505,7 +505,13 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		.qmi_cnss_feature_bitmap = BIT(CNSS_QDSS_CFG_MISS_V01) |
+ 					   BIT(CNSS_PCIE_PERST_NO_PULL_V01),
+ 
+-		.rfkill_pin = 48,
++		/*
++		 * salami (OnePlus 11, NCM865): the rfkill GPIO (pin 48) of the
++		 * module spec is not wired to an airplane-mode switch on this
++		 * board; the firmware then reports the radio as hard-blocked.
++		 * Disable the rfkill feature so the radio stays available.
++		 */
++		.rfkill_pin = 0,
+ 		.rfkill_cfg = 0,
+ 		.rfkill_on_level = 1,
+ 
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index b58a607b713f..f384d8dde441 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -1141,39 +1141,87 @@ static void qcom_pcie_deinit_2_7_0(struct qcom_pcie *pcie)
+ 	regulator_bulk_disable(ARRAY_SIZE(res->supplies), res->supplies);
+ }
+ 
++/*
++ * An "iommu-map" entry is layed out as
++ *
++ *	<rid-base iommu-phandle iommu-specifier length>
++ *
++ * The width of the iommu-specifier is not fixed, it is given by the
++ * "#iommu-cells" property of the IOMMU the phandle points at. Historically
++ * the qcom IOMMUs used a single cell (SID), they now use two (SID + SMR
++ * mask), which makes an entry 5 cells wide instead of 4. Parsing the map
++ * with a fixed 4-cell stride would shift every entry after the first one and
++ * leave the endpoint BDF out of the BDF-to-SID table entirely, silently
++ * breaking all DMA from the endpoint. Derive the stride instead.
++ */
++static int qcom_pcie_iommu_map_stride(const u32 *map, int nr_elems)
++{
++	struct device_node *iommu_np;
++	u32 cells = 1;
++	int stride;
++
++	/* rid-base + phandle + length + at least one specifier cell */
++	if (nr_elems < 4)
++		return -EINVAL;
++
++	iommu_np = of_find_node_by_phandle(map[1]);
++	if (iommu_np) {
++		of_property_read_u32(iommu_np, "#iommu-cells", &cells);
++		of_node_put(iommu_np);
++	}
++
++	stride = 3 + cells;
++
++	if (stride > nr_elems)
++		return -EINVAL;
++
++	return stride;
++}
++
+ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
+ {
+-	/* iommu map structure */
+-	struct {
+-		u32 bdf;
+-		u32 phandle;
+-		u32 smmu_sid;
+-		u32 smmu_sid_len;
+-	} *map;
+ 	void __iomem *bdf_to_sid_base = pcie->parf + PARF_BDF_TO_SID_TABLE_N;
+ 	struct device *dev = pcie->pci->dev;
+ 	u8 qcom_pcie_crc8_table[CRC8_TABLE_SIZE];
+-	int i, nr_map, size = 0;
++	int i, nr_elems, nr_map, stride, size = 0;
+ 	u32 smmu_sid_base;
++	u32 *map;
+ 	u32 val;
++	int ret;
+ 
+ 	of_get_property(dev->of_node, "iommu-map", &size);
+ 	if (!size)
+ 		return 0;
+ 
+-	/* Enable BDF to SID translation by disabling bypass mode (default) */
+-	val = readl(pcie->parf + PARF_BDF_TO_SID_CFG);
+-	val &= ~BDF_TO_SID_BYPASS;
+-	writel(val, pcie->parf + PARF_BDF_TO_SID_CFG);
+-
+ 	map = kzalloc(size, GFP_KERNEL);
+ 	if (!map)
+ 		return -ENOMEM;
+ 
+-	of_property_read_u32_array(dev->of_node, "iommu-map", (u32 *)map,
+-				   size / sizeof(u32));
++	nr_elems = size / sizeof(u32);
++	ret = of_property_read_u32_array(dev->of_node, "iommu-map", map,
++					 nr_elems);
++	if (ret) {
++		kfree(map);
++		return ret;
++	}
++
++	stride = qcom_pcie_iommu_map_stride(map, nr_elems);
++	if (stride < 0) {
++		dev_err(dev, "malformed iommu-map property\n");
++		kfree(map);
++		return stride;
++	}
++
++	if (nr_elems % stride)
++		dev_warn(dev, "iommu-map size %d is not a multiple of %d cells\n",
++			 nr_elems, stride);
+ 
+-	nr_map = size / (sizeof(*map));
++	nr_map = nr_elems / stride;
++
++	/* Enable BDF to SID translation by disabling bypass mode (default) */
++	val = readl(pcie->parf + PARF_BDF_TO_SID_CFG);
++	val &= ~BDF_TO_SID_BYPASS;
++	writel(val, pcie->parf + PARF_BDF_TO_SID_CFG);
+ 
+ 	crc8_populate_msb(qcom_pcie_crc8_table, QCOM_PCIE_CRC8_POLYNOMIAL);
+ 
+@@ -1181,11 +1229,13 @@ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
+ 	memset_io(bdf_to_sid_base, 0, CRC8_TABLE_SIZE * sizeof(u32));
+ 
+ 	/* Extract the SMMU SID base from the first entry of iommu-map */
+-	smmu_sid_base = map[0].smmu_sid;
++	smmu_sid_base = map[2];
+ 
+ 	/* Look for an available entry to hold the mapping */
+ 	for (i = 0; i < nr_map; i++) {
+-		__be16 bdf_be = cpu_to_be16(map[i].bdf);
++		u32 bdf = map[i * stride];
++		u32 smmu_sid = map[i * stride + 2];
++		__be16 bdf_be = cpu_to_be16(bdf);
+ 		u32 val;
+ 		u8 hash;
+ 
+@@ -1208,8 +1258,11 @@ static int qcom_pcie_config_sid_1_9_0(struct qcom_pcie *pcie)
+ 		}
+ 
+ 		/* BDF [31:16] | SID [15:8] | NEXT [7:0] */
+-		val = map[i].bdf << 16 | (map[i].smmu_sid - smmu_sid_base) << 8 | 0;
++		val = bdf << 16 | (smmu_sid - smmu_sid_base) << 8 | 0;
+ 		writel(val, bdf_to_sid_base + hash * sizeof(u32));
++
++		dev_dbg(dev, "BDF2SID: bdf 0x%03x -> sid 0x%x (base 0x%x)\n",
++			bdf, smmu_sid, smmu_sid_base);
+ 	}
+ 
+ 	kfree(map);

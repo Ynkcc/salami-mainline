@@ -1,0 +1,882 @@
+arm64: dts: qcom: salami: Add audio, hall sensor and cache properties
+
+From: ynk <evils.ynk@gmail.com>
+
+新增 OnePlus 11 (salami) 的 WCD9385 音频编解码器与声卡配置、
+IST8801 霍尔传感器驱动以支持三段式静音键、MPSS/IPA 固件节点，
+并为 SM8550 CPU 补充缓存层级描述，同时启用相关内核配置。
+
+Signed-off-by: ynk <evils.ynk@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |  152 ++++++++
+ arch/arm64/boot/dts/qcom/sm8550.dtsi               |   79 ++++
+ arch/arm64/configs/salami_defconfig                |   23 +
+ drivers/input/misc/Kconfig                         |   12 +
+ drivers/input/misc/Makefile                        |    1 
+ drivers/input/misc/ist8801-hall.c                  |  395 ++++++++++++++++++++
+ drivers/net/wireless/ath/ath12k/mac.c              |    8 
+ 7 files changed, 668 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/input/misc/ist8801-hall.c
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+index ea1704be4934..01e6e9b18743 100644
+--- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
++++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+@@ -37,6 +37,98 @@ key-vol-down {
+     };
+ };
+ 
++wcd938x: audio-codec {
++    compatible = "qcom,wcd9385-codec";
++
++    pinctrl-names = "default";
++    pinctrl-0 = <&wcd_default>;
++
++    qcom,micbias1-microvolt = <2700000>;
++    qcom,micbias2-microvolt = <2700000>;
++    qcom,micbias3-microvolt = <2700000>;
++    qcom,micbias4-microvolt = <2700000>;
++    qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
++    qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
++    qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
++    qcom,rx-device = <&wcd_rx>;
++    qcom,tx-device = <&wcd_tx>;
++
++    reset-gpios = <&tlmm 108 GPIO_ACTIVE_LOW>;
++
++    vdd-buck-supply = <&vreg_l15b_1p8>;
++    vdd-rxtx-supply = <&vreg_l15b_1p8>;
++    vdd-io-supply = <&vreg_l15b_1p8>;
++    vdd-mic-bias-supply = <&vreg_bob1>;
++
++    #sound-dai-cells = <1>;
++};
++
++sound {
++    compatible = "qcom,sm8550-sndcard", "qcom,sm8450-sndcard";
++    /* 决定 ALSA 声卡名与 tplg 固件名 qcom/sm8550/SM8550-QRD-tplg.bin */
++    model = "SM8550-QRD";
++
++    audio-routing = "IN1_HPHL", "HPHL_OUT",
++            "IN2_HPHR", "HPHR_OUT",
++            "AMIC1", "MIC BIAS1",
++            "AMIC2", "MIC BIAS2",
++            "AMIC3", "MIC BIAS3",
++            "AMIC4", "MIC BIAS3",
++            "AMIC5", "MIC BIAS3",
++            "TX SWR_INPUT0", "ADC1_OUTPUT",
++            "TX SWR_INPUT1", "ADC2_OUTPUT",
++            "TX SWR_INPUT0", "ADC3_OUTPUT",
++            "TX SWR_INPUT1", "ADC4_OUTPUT";
++
++    wcd-playback-dai-link {
++        link-name = "WCD Playback";
++
++        cpu {
++            sound-dai = <&q6apmbedai RX_CODEC_DMA_RX_0>;
++        };
++
++        codec {
++            sound-dai = <&wcd938x 0>, <&swr1 0>, <&lpass_rxmacro 0>;
++        };
++
++        platform {
++            sound-dai = <&q6apm>;
++        };
++    };
++
++    wcd-capture-dai-link {
++        link-name = "WCD Capture";
++
++        cpu {
++            sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
++        };
++
++        codec {
++            sound-dai = <&wcd938x 1>, <&swr2 0>, <&lpass_txmacro 0>;
++        };
++
++        platform {
++            sound-dai = <&q6apm>;
++        };
++    };
++
++    va-dai-link {
++        link-name = "VA Capture";
++
++        cpu {
++            sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
++        };
++
++        codec {
++            sound-dai = <&lpass_vamacro 0>;
++        };
++
++        platform {
++            sound-dai = <&q6apm>;
++        };
++    };
++};
++
+ oplus_mem: memory {
+     ddr_device_type = <0x08>;
+     device_type = "memory";
+@@ -549,6 +641,14 @@ bt_en_default: bt-en-default-state {
+         pins = "gpio81";
+     };
+ 
++    wcd_default: wcd-reset-n-active-state {
++        pins = "gpio108";
++        function = "gpio";
++        drive-strength = <16>;
++        bias-disable;
++        output-low;
++    };
++
+     wlan_en_default: wlan-en-default-state {
+         bias-pull-down;
+         drive-strength = <8>;
+@@ -651,6 +751,16 @@ &remoteproc_cdsp {
+     status = "okay";
+ };
+ 
++&remoteproc_mpss {
++    firmware-name = "qcom/sm8550/oneplus/salami/modem.mbn", "qcom/sm8550/oneplus/salami/modem_dtb.mbn";
++    status = "okay";
++};
++
++&ipa {
++    firmware-name = "qcom/sm8550/oneplus/salami/ipa_fws.mbn";
++    status = "okay";
++};
++
+ &sleep_clk {
+     clock-frequency = <32764>;
+ };
+@@ -856,3 +966,45 @@ &mdss_dsi0_phy {
+ &adspslpi_mem {
+     reg = <0x00 0x9ea00000 0x00 0x4880000>;
+ };
++
++&i2c9 {
++    clock-frequency = <400000>;
++    status = "okay";
++
++    /* alert slider hall sensors (tri-state key) */
++    hall_up: hall-sensor@19 {
++        compatible = "oplus,hall-ist8801,up";
++        reg = <0x19>;
++        vdd-supply = <&vreg_l2b_3p0>;
++        vio-supply = <&vreg_l1b_1p8>;
++    };
++
++    hall_down: hall-sensor@18 {
++        compatible = "oplus,hall-ist8801,down";
++        reg = <0x18>;
++        vdd-supply = <&vreg_l2b_3p0>;
++        vio-supply = <&vreg_l1b_1p8>;
++    };
++};
++
++&swr1 {
++    status = "okay";
++
++    /* WCD9385 RX */
++    wcd_rx: codec@0,4 {
++        compatible = "sdw20217010d00";
++        reg = <0 4>;
++        qcom,rx-port-mapping = <1 2 3 4 5>;
++    };
++};
++
++&swr2 {
++    status = "okay";
++
++    /* WCD9385 TX */
++    wcd_tx: codec@0,3 {
++        compatible = "sdw20217010d00";
++        reg = <0 3>;
++        qcom,tx-port-mapping = <2 2 3 4>;
++    };
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8550.dtsi b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+index 0e701e709235..7f7225e397b4 100644
+--- a/arch/arm64/boot/dts/qcom/sm8550.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+@@ -87,15 +87,28 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			/* Cortex-A510 L1: 32KB D (4-way), 64KB I (8-way) */
++			d-cache-size = <32768>;
++			d-cache-sets = <128>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_0: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <262144>;	/* 256KB, 8-way */
++				cache-sets = <512>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 				l3_0: l3-cache {
+ 					compatible = "cache";
+ 					cache-level = <3>;
+ 					cache-unified;
++					cache-size = <6291456>;	/* 6MB, 16-way */
++					cache-sets = <6144>;
++					cache-line-size = <64>;
+ 				};
+ 			};
+ 		};
+@@ -120,10 +133,19 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			d-cache-size = <32768>;
++			d-cache-sets = <128>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_100: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <262144>;
++				cache-sets = <512>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 			};
+ 		};
+@@ -148,10 +170,19 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			d-cache-size = <32768>;
++			d-cache-sets = <128>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_200: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <262144>;
++				cache-sets = <512>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 			};
+ 		};
+@@ -176,10 +207,20 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			/* Cortex-A715 L1: 64KB D (4-way), 64KB I (8-way) */
++			d-cache-size = <65536>;
++			d-cache-sets = <256>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_300: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <524288>;	/* 512KB, 8-way */
++				cache-sets = <1024>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 			};
+ 		};
+@@ -204,10 +245,19 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			d-cache-size = <65536>;
++			d-cache-sets = <256>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_400: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <524288>;
++				cache-sets = <1024>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 			};
+ 		};
+@@ -232,10 +282,20 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			/* Cortex-A710 L1: 64KB D (4-way), 64KB I (8-way) */
++			d-cache-size = <65536>;
++			d-cache-sets = <256>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_500: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <524288>;
++				cache-sets = <1024>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 			};
+ 		};
+@@ -260,10 +320,19 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			d-cache-size = <65536>;
++			d-cache-sets = <256>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_600: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <524288>;
++				cache-sets = <1024>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 			};
+ 		};
+@@ -288,10 +357,20 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
+ 					<&epss_l3 MASTER_EPSS_L3_APPS
+ 					 &epss_l3 SLAVE_EPSS_L3_SHARED>;
+ 			#cooling-cells = <2>;
++			/* Cortex-X3 L1: 64KB D (4-way), 64KB I (8-way) */
++			d-cache-size = <65536>;
++			d-cache-sets = <256>;
++			d-cache-line-size = <64>;
++			i-cache-size = <65536>;
++			i-cache-sets = <128>;
++			i-cache-line-size = <64>;
+ 			l2_700: l2-cache {
+ 				compatible = "cache";
+ 				cache-level = <2>;
+ 				cache-unified;
++				cache-size = <1048576>;	/* 1MB, 8-way */
++				cache-sets = <2048>;
++				cache-line-size = <64>;
+ 				next-level-cache = <&l3_0>;
+ 			};
+ 		};
+diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
+index a45f1941ed4c..e2b0dccd9b20 100644
+--- a/arch/arm64/configs/salami_defconfig
++++ b/arch/arm64/configs/salami_defconfig
+@@ -572,6 +572,7 @@ CONFIG_QCOM_PIL_INFO=y
+ CONFIG_QCOM_Q6V5_COMMON=y
+ CONFIG_QCOM_Q6V5_MSS=y
+ CONFIG_QCOM_Q6V5_PAS=m
++CONFIG_QCOM_IPA=m
+ CONFIG_QCOM_SYSMON=y
+ CONFIG_QCOM_PD_MAPPER=y
+ CONFIG_RPMSG_QCOM_GLINK_RPM=y
+@@ -634,6 +635,7 @@ CONFIG_KEYBOARD_CROS_EC=y
+ CONFIG_INPUT_TOUCHSCREEN=y
+ CONFIG_TOUCHSCREEN_SYNAPTICS_TCM_I2C=y
+ CONFIG_INPUT_MISC=y
++CONFIG_INPUT_IST8801_HALL=y
+ CONFIG_INPUT_PM8941_PWRKEY=y
+ CONFIG_INPUT_HISI_POWERKEY=y
+ CONFIG_SERIO_AMBAKMI=y
+@@ -670,6 +672,25 @@ CONFIG_EXTCON_USBC_CROS_EC=y
+ CONFIG_RESET_RZG2L_USBPHY_CTRL=y
+ 
+ 
++# === Audio ===
++CONFIG_PINCTRL_LPASS_LPI=y
++CONFIG_PINCTRL_SM8550_LPASS_LPI=y
++CONFIG_SOUND=y
++CONFIG_SND=y
++CONFIG_SND_JACK=y
++CONFIG_SND_SOC=y
++CONFIG_SND_SOC_QCOM=y
++CONFIG_SND_SOC_SC8280XP=y
++CONFIG_SOUNDWIRE=y
++CONFIG_SOUNDWIRE_QCOM=y
++CONFIG_SND_SOC_WCD938X_SDW=y
++CONFIG_SND_SOC_WSA884X=y
++CONFIG_SND_SOC_LPASS_MACRO_COMMON=y
++CONFIG_SND_SOC_LPASS_WSA_MACRO=y
++CONFIG_SND_SOC_LPASS_VA_MACRO=y
++CONFIG_SND_SOC_LPASS_RX_MACRO=y
++CONFIG_SND_SOC_LPASS_TX_MACRO=y
++
+ # ==== Explicitly disable auto-default-m drivers (keep module count minimal) ====
+ CONFIG_CLK_ELIZA_DISPCC=n
+ CONFIG_CLK_ELIZA_TCSRCC=n
+@@ -711,7 +732,7 @@ CONFIG_MSM_MMCC_8998=n
+ CONFIG_NET_IP_TUNNEL=n
+ CONFIG_PCI_PWRCTRL_TC9563=n
+ CONFIG_QCM_DISPCC_2290=n
+-CONFIG_QCOM_APR=n
++CONFIG_QCOM_APR=y
+ CONFIG_QCOM_PAS_TEE=n
+ CONFIG_QCOM_PBS=n
+ CONFIG_QCOM_STATS=n
+diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
+index 169768e3d5bb..958d9a176d00 100644
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -1023,4 +1023,16 @@ config INPUT_STPMIC1_ONKEY
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called stpmic1_onkey.
+ 
++config INPUT_IST8801_HALL
++	tristate "IST8801 hall sensor alert slider support"
++	depends on I2C
++	help
++	  Say Y here to enable support for the pair of IST8801 hall sensors
++	  that make up the tri-state alert slider on OnePlus handsets such
++	  as the OnePlus 11 (salami).  The slider position is reported as
++	  EV_ABS/ABS_SND_PROFILE.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called ist8801-hall.
++
+ endif
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+index 1339619f0769..81e39ce040cb 100644
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -97,3 +97,4 @@ obj-$(CONFIG_INPUT_WM831X_ON)		+= wm831x-on.o
+ obj-$(CONFIG_INPUT_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
+ obj-$(CONFIG_INPUT_YEALINK)		+= yealink.o
+ obj-$(CONFIG_INPUT_IDEAPAD_SLIDEBAR)	+= ideapad_slidebar.o
++obj-$(CONFIG_INPUT_IST8801_HALL)	+= ist8801-hall.o
+diff --git a/drivers/input/misc/ist8801-hall.c b/drivers/input/misc/ist8801-hall.c
+new file mode 100644
+index 000000000000..8771f9c2255f
+--- /dev/null
++++ b/drivers/input/misc/ist8801-hall.c
+@@ -0,0 +1,395 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Driver for the pair of IST8801 hall sensors used by the alert slider
++ * (tri-state key) on OnePlus handsets such as the OnePlus 11 (salami).
++ *
++ * The slider magnetizes one of the two hall switches (up or down) while
++ * the middle position leaves both mostly unmagnetized.  Both ICs are
++ * continuously measured over I2C and the slider position is reported to
++ * userspace through EV_ABS/ABS_SND_PROFILE, matching the interface used
++ * by the gpio-keys based alert sliders of older OnePlus devices.
++ *
++ * Position heuristic mirrors the downstream oplus tri-state key driver:
++ * delta = up_data - down_data (sign-normalized); large positive delta is
++ * the up position, large negative the down position, otherwise middle.
++ */
++
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/input.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++#include <uapi/linux/input-event-codes.h>
++
++/* Register map */
++#define IST8801_REG_PERSINT		0x00
++#define IST8801_PERSINT_COUNT(n)	((n) << 4)
++#define IST8801_REG_INTSRS		0x01
++#define IST8801_REG_SRST		0x07
++#define IST8801_SRST_RESET		0x01
++#define IST8801_REG_OPF			0x08
++#define IST8801_OPF_FREQ_10HZ		0x10
++#define IST8801_REG_DID			0x09
++#define IST8801_DID			0x81
++#define IST8801_REG_CNTL2		0x0d
++#define IST8801_REG_ST1			0x10
++#define IST8801_ST1_DRDY		0x01
++#define IST8801_REG_HSL			0x11
++#define IST8801_REG_HSH			0x12
++#define IST8801_REG_ACTION		0x20
++#define IST8801_REG_IFCNTL		0x40
++#define IST8801_REG_GAINCNTL		0x54
++
++/* Position of the two hall ICs relative to the slider */
++enum ist8801_role {
++	IST8801_UP,
++	IST8801_DOWN,
++	IST8801_NUM_ROLES,
++};
++
++#define IST8801_POSITION_DELTA		30
++#define IST8801_POLL_INTERVAL_MS	200
++
++struct ist8801_chip {
++	struct i2c_client *client;
++	struct regulator *vdd;
++	struct regulator *vio;
++	enum ist8801_role role;
++	bool ready;
++};
++
++struct ist8801_hall {
++	struct mutex lock;
++	struct input_dev *input;
++	struct ist8801_chip *chips[IST8801_NUM_ROLES];
++	int position;
++};
++
++/*
++ * The slider consists of two separate I2C devices that jointly form one
++ * input device; keep a system-wide singleton (there is exactly one alert
++ * slider per device).
++ */
++static struct ist8801_hall ist8801_hall = {
++	.lock = __MUTEX_INITIALIZER(ist8801_hall.lock),
++	.position = -1,
++};
++
++static int ist8801_read_reg(struct ist8801_chip *chip, u8 reg, u8 *val)
++{
++	struct i2c_client *client = chip->client;
++	struct i2c_msg msgs[2] = {
++		{ .addr = client->addr, .flags = 0,
++		  .len = 1, .buf = &reg },
++		{ .addr = client->addr, .flags = I2C_M_RD,
++		  .len = 1, .buf = val },
++	};
++	int ret;
++
++	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
++	if (ret != ARRAY_SIZE(msgs)) {
++		dev_err(&client->dev, "read reg 0x%02x failed: %d\n", reg, ret);
++		return ret < 0 ? ret : -EIO;
++	}
++
++	return 0;
++}
++
++static int ist8801_write_reg(struct ist8801_chip *chip, u8 reg, u8 val)
++{
++	struct i2c_client *client = chip->client;
++	u8 buf[2] = { reg, val };
++	int ret;
++
++	ret = i2c_master_send(client, buf, sizeof(buf));
++	if (ret != sizeof(buf)) {
++		dev_err(&client->dev, "write reg 0x%02x failed: %d\n", reg, ret);
++		return ret < 0 ? ret : -EIO;
++	}
++
++	return 0;
++}
++
++static int ist8801_read_data(struct ist8801_chip *chip, s16 *value)
++{
++	struct i2c_client *client = chip->client;
++	struct i2c_msg msgs[2] = {
++		{ .addr = client->addr, .flags = 0,
++		  .len = 1, .buf = (u8[]){ IST8801_REG_ST1 } },
++		{ .addr = client->addr, .flags = I2C_M_RD,
++		  .len = 3, .buf = (u8[3]){ } },
++	};
++	u8 *buf = msgs[1].buf;
++	int ret;
++
++	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
++	if (ret != ARRAY_SIZE(msgs)) {
++		dev_err(&client->dev, "read measurement failed: %d\n", ret);
++		return ret < 0 ? ret : -EIO;
++	}
++
++	if (!(buf[0] & IST8801_ST1_DRDY))
++		return -EAGAIN;
++
++	*value = (s16)((buf[2] << 8) | buf[1]);
++
++	return 0;
++}
++
++static int ist8801_init_chip(struct ist8801_chip *chip)
++{
++	struct i2c_client *client = chip->client;
++	u8 val;
++	int ret;
++
++	/* soft reset, then verify the device id */
++	ret = ist8801_write_reg(chip, IST8801_REG_SRST, IST8801_SRST_RESET);
++	if (ret)
++		return ret;
++	msleep(20);
++
++	ret = ist8801_read_reg(chip, IST8801_REG_DID, &val);
++	if (ret)
++		return ret;
++	if (val != IST8801_DID) {
++		dev_err(&client->dev,
++			"unexpected device id 0x%02x (expected 0x%02x)\n",
++			val, IST8801_DID);
++		return -ENODEV;
++	}
++
++	/* 10-bit ADC resolution, default gain */
++	ret = ist8801_write_reg(chip, IST8801_REG_CNTL2, 0x0c);
++	if (ret)
++		return ret;
++
++	/* keep the factory gain setting */
++	ret = ist8801_read_reg(chip, IST8801_REG_GAINCNTL, &val);
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_GAINCNTL, val);
++	if (ret)
++		return ret;
++
++	/* interrupt persistence, but keep the INT pin unused (polling) */
++	ret = ist8801_write_reg(chip, IST8801_REG_PERSINT,
++				IST8801_PERSINT_COUNT(2));
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_INTSRS, 0x00);
++	if (ret)
++		return ret;
++
++	/* enter continuous measurement mode at 10 Hz */
++	ret = ist8801_write_reg(chip, IST8801_REG_ACTION, 0x00);
++	if (ret)
++		return ret;
++	usleep_range(5000, 5100);
++	ret = ist8801_write_reg(chip, IST8801_REG_OPF, 0x00);
++	if (ret)
++		return ret;
++	ret = ist8801_read_reg(chip, IST8801_REG_IFCNTL, &val);
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_IFCNTL, val | 0x04);
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_OPF, IST8801_OPF_FREQ_10HZ);
++	if (ret)
++		return ret;
++
++	chip->ready = true;
++	dev_info(&client->dev, "hall sensor ready (%s)\n",
++		 chip->role == IST8801_UP ? "up" : "down");
++
++	return 0;
++}
++
++static void ist8801_poll(struct input_dev *input)
++{
++	struct ist8801_hall *hall = &ist8801_hall;
++	struct ist8801_chip *up = hall->chips[IST8801_UP];
++	struct ist8801_chip *down = hall->chips[IST8801_DOWN];
++	s16 up_val, down_val;
++	int delta, position;
++
++	scoped_guard(mutex, &hall->lock) {
++		if (!up || !down || !up->ready || !down->ready)
++			return;
++
++		if (ist8801_read_data(up, &up_val) ||
++		    ist8801_read_data(down, &down_val))
++			return;
++
++		/*
++		 * Downstream tri-state key heuristic: normalize the sign of
++		 * both readings, then classify by their difference.
++		 */
++		if (up_val < 0 || down_val < 0)
++			delta = -up_val - -down_val;
++		else
++			delta = up_val - down_val;
++
++		if (delta > IST8801_POSITION_DELTA)
++			position = SND_PROFILE_RING;	/* slider up */
++		else if (delta < -IST8801_POSITION_DELTA)
++			position = SND_PROFILE_SILENT;	/* slider down */
++		else
++			position = SND_PROFILE_VIBRATE;	/* middle */
++
++		if (position != hall->position) {
++			hall->position = position;
++			input_report_abs(input, ABS_SND_PROFILE, position);
++			input_sync(input);
++		}
++	}
++}
++
++static int ist8801_try_register_input(struct ist8801_hall *hall,
++				      struct device *dev)
++{
++	struct input_dev *input;
++	int ret;
++
++	if (hall->input)
++		return 0;
++	if (!hall->chips[IST8801_UP] || !hall->chips[IST8801_DOWN])
++		return 0;
++
++	input = input_allocate_device();
++	if (!input)
++		return -ENOMEM;
++
++	input->name = "Alert slider";
++	input->id.bustype = BUS_I2C;
++	input_set_capability(input, EV_ABS, ABS_SND_PROFILE);
++	input_set_abs_params(input, ABS_SND_PROFILE,
++			     SND_PROFILE_SILENT, SND_PROFILE_RING, 0, 0);
++	input_setup_polling(input, ist8801_poll);
++	input_set_poll_interval(input, IST8801_POLL_INTERVAL_MS);
++
++	ret = input_register_device(input);
++	if (ret) {
++		input_free_device(input);
++		return ret;
++	}
++
++	hall->input = input;
++	dev_info(dev, "alert slider input device registered\n");
++
++	return 0;
++}
++
++static void ist8801_unregister_input(struct ist8801_hall *hall)
++{
++	if (hall->input) {
++		input_unregister_device(hall->input);
++		hall->input = NULL;
++	}
++	hall->position = -1;
++}
++
++static int ist8801_probe(struct i2c_client *client)
++{
++	struct ist8801_hall *hall = &ist8801_hall;
++	struct ist8801_chip *chip;
++	enum ist8801_role role;
++	int ret;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
++		return -EOPNOTSUPP;
++
++	if (of_device_is_compatible(client->dev.of_node,
++				    "oplus,hall-ist8801,up"))
++		role = IST8801_UP;
++	else if (of_device_is_compatible(client->dev.of_node,
++					 "oplus,hall-ist8801,down"))
++		role = IST8801_DOWN;
++	else
++		return -EINVAL;
++
++	chip = devm_kzalloc(&client->dev, sizeof(*chip), GFP_KERNEL);
++	if (!chip)
++		return -ENOMEM;
++
++	chip->client = client;
++	chip->role = role;
++
++	chip->vdd = devm_regulator_get(&client->dev, "vdd");
++	if (IS_ERR(chip->vdd))
++		return PTR_ERR(chip->vdd);
++
++	chip->vio = devm_regulator_get(&client->dev, "vio");
++	if (IS_ERR(chip->vio))
++		return PTR_ERR(chip->vio);
++
++	ret = regulator_enable(chip->vdd);
++	if (ret)
++		return ret;
++	msleep(20);
++	ret = regulator_enable(chip->vio);
++	if (ret)
++		goto err_disable_vdd;
++
++	ret = ist8801_init_chip(chip);
++	if (ret)
++		goto err_disable_vio;
++
++	i2c_set_clientdata(client, chip);
++
++	ret = 0;
++	mutex_lock(&hall->lock);
++	hall->chips[role] = chip;
++	ret = ist8801_try_register_input(hall, &client->dev);
++	if (ret)
++		hall->chips[role] = NULL;
++	mutex_unlock(&hall->lock);
++
++	return ret;
++
++err_disable_vio:
++	regulator_disable(chip->vio);
++err_disable_vdd:
++	regulator_disable(chip->vdd);
++	return ret;
++}
++
++static void ist8801_remove(struct i2c_client *client)
++{
++	struct ist8801_hall *hall = &ist8801_hall;
++	struct ist8801_chip *chip = i2c_get_clientdata(client);
++
++	guard(mutex)(&hall->lock);
++	hall->chips[chip->role] = NULL;
++	if (!hall->chips[IST8801_UP] && !hall->chips[IST8801_DOWN])
++		ist8801_unregister_input(hall);
++}
++
++static const struct i2c_device_id ist8801_id[] = {
++	{ "ist8801-hall" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, ist8801_id);
++
++static const struct of_device_id ist8801_of_match[] = {
++	{ .compatible = "oplus,hall-ist8801,up" },
++	{ .compatible = "oplus,hall-ist8801,down" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ist8801_of_match);
++
++static struct i2c_driver ist8801_driver = {
++	.driver = {
++		.name		= "ist8801-hall",
++		.of_match_table	= ist8801_of_match,
++	},
++	.probe		= ist8801_probe,
++	.remove		= ist8801_remove,
++	.id_table	= ist8801_id,
++};
++module_i2c_driver(ist8801_driver);
++
++MODULE_DESCRIPTION("IST8801 hall sensor support for OnePlus alert sliders");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 676532f487da..cfc2b14c6baa 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -14472,7 +14472,13 @@ ath12k_mac_setup_radio_iface_comb(struct ath12k *ar,
+ 	if (!limits)
+ 		return -ENOMEM;
+ 
+-	limits[0].max = 1;
++	/* salami: allow STA + AP concurrency — firmware supports it (vdevs are
++	 * created lazily, and AP + STA vdev coexistence is validated); upstream
++	 * limit of 1 STA blocks NetworkManager from managing a second vif,
++	 * which is required for the KDE/NM hotspot toggle to run the AP on a
++	 * separate interface while the STA stays connected.
++	 */
++	limits[0].max = 2;
+ 	limits[0].types |= BIT(NL80211_IFTYPE_STATION);
+ 
+ 	if (ap || mesh || p2p)

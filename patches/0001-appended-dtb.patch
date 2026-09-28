@@ -1,0 +1,106 @@
+arm64: boot: Add support for appended device tree blob
+
+From: ynk <evils.ynk@gmail.com>
+
+Signed-off-by: ynk <evils.ynk@gmail.com>
+---
+ arch/arm64/Kconfig              |   11 +++++++++++
+ arch/arm64/kernel/head.S        |   23 +++++++++++++++++++++++
+ arch/arm64/kernel/vmlinux.lds.S |   18 ++++++++++++++++++
+ 3 files changed, 52 insertions(+)
+
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index b5a51b0ef944..4df970b53e5e 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -2477,6 +2477,17 @@ endmenu # "Kernel Features"
+ 
+ menu "Boot options"
+ 
++config ARM64_APPENDED_DTB
++	bool "Use appended device tree blob to Image"
++	depends on OF
++	help
++	  With this option, the boot code will look for a device tree binary
++	  (DTB) appended to Image
++	  (e.g. cat Image <filename>.dtb > Image_w_dtb).
++
++	  With this option, the size of Image will be extended to be 2MB aligned.
++	  The 2MB memory followed by Image is used for FDT blob.
++
+ config ARM64_ACPI_PARKING_PROTOCOL
+ 	bool "Enable support for the ARM64 ACPI parking protocol"
+ 	depends on ACPI
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+index 87a822e5c4ca..2b7145dcb45f 100644
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -168,7 +168,30 @@ SYM_CODE_END(record_mmu_state)
+  * Preserve the arguments passed by the bootloader in x0 .. x3
+  */
+ SYM_CODE_START_LOCAL(preserve_boot_args)
++/*
++ * 追加式设备树（CONFIG_ARM64_APPENDED_DTB）：bootloader 把 dtb 紧贴 Image 尾部加载，
++ * 因此 dtb 落在 _edata。命中 FDT magic 就用它、丢弃 bootloader 从 x0 传进来的 FDT
++ * （ABL 直启通路没有可用 dtb；组包见 salami/scripts/mk-abl-boot-img.sh）。
++ * 本段在重定位前后都会执行，x21 始终按「bootloader 传入的 FDT」语义使用。
++ */
++#ifdef CONFIG_ARM64_APPENDED_DTB
++	mov	x21, x0				// x21=FDT
++	mov	x22, x1				// w1 is 32bit subset of x1
++	adrp	x23, _edata
++	ldr	w0, [x23]
++#ifndef __AARCH64EB__
++	ldr	w1, =0xedfe0dd0			// FDT magic word
++#else
++	ldr	w1, =0xd00dfeed
++#endif
++	cmp	w0, w1
++	b.ne	1f				// no FDT found
++	mov	x21, x23			// use _edata as fdt pointer
++1:
++	mov	x1, x22				// restore x1
++#else
+ 	mov	x21, x0				// x21=FDT
++#endif
+ 
+ 	adr_l	x0, boot_args			// record the contents of
+ 	stp	x21, x1, [x0]			// x0 .. x3 at kernel entry
+diff --git a/arch/arm64/kernel/vmlinux.lds.S b/arch/arm64/kernel/vmlinux.lds.S
+index af1d72020976..0a6091581135 100644
+--- a/arch/arm64/kernel/vmlinux.lds.S
++++ b/arch/arm64/kernel/vmlinux.lds.S
+@@ -171,6 +171,18 @@ PECOFF_FILE_ALIGNMENT = 0x200;
+ #define PECOFF_EDATA_PADDING
+ #endif
+ 
++/*
++ * Set FDT pointer 2MB aligned to ensure
++ * it don't cross a 2-megabyte boundary.
++ */
++FDT_FILE_ALIGNMENT = (1 << 21);
++#ifdef CONFIG_ARM64_APPENDED_DTB
++#define FDT_EDATA_PADDING	\
++	.fdt_edata_padding : { BYTE(0); . = ALIGN(FDT_FILE_ALIGNMENT); }
++#else
++#define FDT_EDATA_PADDING
++#endif
++
+ SECTIONS
+ {
+ 	/*
+@@ -346,8 +358,14 @@ SECTIONS
+ 
+ 	PECOFF_EDATA_PADDING
+ 	__pecoff_data_rawsize = ABSOLUTE(. - __initdata_begin);
++	FDT_EDATA_PADDING	/* _edata 2MB 对齐：追加 dtb 的落点 */
+ 	_edata = .;
+ 
++#ifdef CONFIG_ARM64_APPENDED_DTB
++	/* _edata 之后的 2MB 留给 bootloader 加载在那里的 dtb，不能被 BSS 清零覆盖 */
++	. += (1 << 21);
++#endif
++
+ 	/* start of zero-init region */
+ 	BSS_SECTION(SBSS_ALIGN, 0, PAGE_SIZE)
+ 	__pi___bss_start = __bss_start;

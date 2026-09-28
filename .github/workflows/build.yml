@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+    paths: ['base', 'series', 'patches/**', 'scripts/**', '.github/workflows/**']
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show baseline
+        run: cat base
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+          df -h /
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm bc bison flex cpio dwarves \
+            libssl-dev libelf-dev
+          # mkbootimg（AOSP 单文件 Python 版）
+          curl -fsSL \
+            "https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/mkbootimg.py?format=TEXT" \
+            | base64 -d > /usr/local/bin/mkbootimg
+          chmod +x /usr/local/bin/mkbootimg
+          mkbootimg --help >/dev/null && echo "mkbootimg ok"
+
+      - name: Setup patched kernel tree
+        run: ./scripts/setup-kernel.sh
+
+      - name: Build kernel
+        run: |
+          ./scripts/build-kernel.sh
+          ./scripts/boot-img.sh
+
+      - name: Upload boot image
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-salami-${{ github.run_number }}
+          path: |
+            kernel/out/boot-salami.img
+            kernel/out/include/config/kernel.release
+          if-no-files-found: error
