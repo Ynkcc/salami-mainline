@@ -1,5 +1,5 @@
 # 上游基线指针 —— scripts/setup-kernel.sh 与 CI 以此浅拉取上游并应用 patches/
 # 升级基线流程见 patches/series 首行注释对应的本地 stgit 栈（salami-mainline@master）
 repo=https://github.com/torvalds/linux
-base=5fc5768c7ca92895ccd1de94dc521e5a55ae7896
-describe=v7.3-rc4-185-g5fc5768c7ca9
+base=5a956dde5526a634dca7ccad27c051ebcc306089
+describe=v7.3-rc5

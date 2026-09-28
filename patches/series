@@ -1,4 +1,4 @@
-# This series applies on Git commit 5fc5768c7ca92895ccd1de94dc521e5a55ae7896
+# This series applies on Git commit 72d3fcf802c45d00b300f25b848a93c3a2bd7c7e
 0001-appended-dtb.patch
 0002-panel-amb670yf07.patch
 0003-dts-defconfig-baseline.patch

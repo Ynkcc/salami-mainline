@@ -40,11 +40,16 @@ fi
 make -C "$REPO_DIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 -j"$JOBS" modules
 
 # 安装模块到独立目录并打包，供 rootfs 侧使用 / CI 上传
+# 注意：tar 包内是 release 目录的【内容】（无 lib/ 前缀），安装时须解到
+# /lib/modules/<release>/ 下，绝不能 tar -C / 解压——usr-merged 系统的 /lib
+# 是 usr/lib 的符号链接，顶层 lib/ 条目会把符号链接替换成真实目录，
+# 导致 ld-linux/firmware 全部失联（已在真机上踩过一次）。
+RELEASE=$(cat "$OUT_DIR/include/config/kernel.release")
 MODDIR="$OUT_DIR/modroot"
 rm -rf "$MODDIR" "$OUT_DIR/salami-modules.tar.gz"
 make -C "$REPO_DIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 -j"$JOBS" \
   INSTALL_MOD_PATH="$MODDIR" modules_install
-tar -C "$MODDIR" -czf "$OUT_DIR/salami-modules.tar.gz" .
+tar -C "$MODDIR/lib/modules/$RELEASE" -czf "$OUT_DIR/salami-modules.tar.gz" .
 
 printf 'kernel=%s\n' "$OUT_DIR/arch/arm64/boot/Image.gz"
 printf 'dtb=%s\n' "$DTB"
