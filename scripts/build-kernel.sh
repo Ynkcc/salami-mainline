@@ -39,5 +39,13 @@ fi
 # "disagrees about version of symbol module_layout"
 make -C "$REPO_DIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 -j"$JOBS" modules
 
+# 安装模块到独立目录并打包，供 rootfs 侧使用 / CI 上传
+MODDIR="$OUT_DIR/modroot"
+rm -rf "$MODDIR" "$OUT_DIR/salami-modules.tar.gz"
+make -C "$REPO_DIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 -j"$JOBS" \
+  INSTALL_MOD_PATH="$MODDIR" modules_install
+tar -C "$MODDIR" -czf "$OUT_DIR/salami-modules.tar.gz" .
+
 printf 'kernel=%s\n' "$OUT_DIR/arch/arm64/boot/Image.gz"
 printf 'dtb=%s\n' "$DTB"
+printf 'modules=%s\n' "$OUT_DIR/salami-modules.tar.gz"

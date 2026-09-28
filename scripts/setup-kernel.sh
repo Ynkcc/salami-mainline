@@ -24,6 +24,9 @@ git -C kernel remote remove upstream 2>/dev/null || true
 git -C kernel remote add upstream "$UPSTREAM"
 git -C kernel fetch --depth=1 upstream "$BASE"
 git -C kernel checkout -q --detach --force FETCH_HEAD
+# git am 需要 committer 身份（CI 里全新 git init 的仓库没有默认 ident）
+git -C kernel config user.name "${GIT_AUTHOR_NAME:-salami-ci}"
+git -C kernel config user.email "${GIT_AUTHOR_EMAIL:-salami-ci@localhost}"
 if [ "${1:-}" = "--clean" ]; then
     git -C kernel clean -fdx
 fi

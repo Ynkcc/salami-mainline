@@ -47,5 +47,6 @@ jobs:
           name: boot-salami-${{ github.run_number }}
           path: |
             kernel/out/boot-salami.img
+            kernel/out/salami-modules.tar.gz
             kernel/out/include/config/kernel.release
           if-no-files-found: error
