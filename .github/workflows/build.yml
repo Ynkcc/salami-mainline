@@ -29,8 +29,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang lld llvm bc bison flex cpio dwarves \
-            libssl-dev libelf-dev mkbootimg
-          mkbootimg --help >/dev/null && echo "mkbootimg ok"
+            libssl-dev libelf-dev
+          # mkbootimg 使用仓库内 vendored 版本（Ubuntu noble 的 apt 包缺 gki 模块，开箱即坏）
+          ./mkbootimg --help >/dev/null && echo "mkbootimg ok"
 
       - name: Setup patched kernel tree
         run: ./scripts/setup-kernel.sh

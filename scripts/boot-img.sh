@@ -55,7 +55,12 @@ PY
 
 gzip -9 -c "$WORK/Image_w_dtb" >"$WORK/Image_w_dtb.gz"
 
-mkbootimg \
+# mkbootimg：优先用仓库内 vendor 的单文件版（与 aston/sheng 同源，无 gki 模块依赖），
+# 系统 mkbootimg（新版带 gki import，apt 包缺 gki 会直接崩）仅作回退
+MKBOOTIMG="${MKBOOTIMG:-$PORTS_ROOT/mkbootimg}"
+[ -x "$MKBOOTIMG" ] || MKBOOTIMG=mkbootimg
+
+"$MKBOOTIMG" \
   --header_version 4 \
   --base 0x0 \
   --kernel "$WORK/Image_w_dtb.gz" \
