@@ -28,7 +28,7 @@ if [ "${1:-}" = "--clean" ]; then
     git -C kernel clean -fdx
 fi
 
-mapfile -t PATCHES < <(find patches -maxdepth 1 -name '*.patch' ! -name '0000-*' | sort)
+mapfile -t PATCHES < <(find "$PORTS_ROOT/patches" -maxdepth 1 -name '*.patch' ! -name '0000-*' | sort)
 [ "${#PATCHES[@]}" -gt 0 ] || { echo 'patches/ 下没有补丁' >&2; exit 1; }
 
 if ! git -C kernel am "${PATCHES[@]}"; then
