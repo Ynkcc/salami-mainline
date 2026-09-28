@@ -29,12 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang lld llvm bc bison flex cpio dwarves \
-            libssl-dev libelf-dev
-          # mkbootimg（AOSP 单文件 Python 版）
-          curl -fsSL \
-            "https://android.googlesource.com/platform/system/tools/mkbootimg/+/refs/heads/main/mkbootimg.py?format=TEXT" \
-            | base64 -d > /usr/local/bin/mkbootimg
-          chmod +x /usr/local/bin/mkbootimg
+            libssl-dev libelf-dev mkbootimg
           mkbootimg --help >/dev/null && echo "mkbootimg ok"
 
       - name: Setup patched kernel tree
