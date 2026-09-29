@@ -12,7 +12,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
-index 7bf0f2d16afe..a45f1941ed4c 100644
+index 7bf0f2d16..a45f1941e 100644
 --- a/arch/arm64/configs/salami_defconfig
 +++ b/arch/arm64/configs/salami_defconfig
 @@ -530,7 +530,7 @@ CONFIG_PHY_QCOM_QMP=y

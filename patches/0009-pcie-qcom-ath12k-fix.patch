@@ -15,7 +15,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  4 files changed, 93 insertions(+), 20 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-index 64aff3f170c7..ea1704be4934 100644
+index 64aff3f17..ea1704be4 100644
 --- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 @@ -606,6 +606,8 @@ wifi@0 {
@@ -28,7 +28,7 @@ index 64aff3f170c7..ea1704be4934 100644
          vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
          vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
 diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
-index 99bf5cf79d10..676532f487da 100644
+index 99bf5cf79..676532f48 100644
 --- a/drivers/net/wireless/ath/ath12k/mac.c
 +++ b/drivers/net/wireless/ath/ath12k/mac.c
 @@ -7,6 +7,7 @@
@@ -58,7 +58,7 @@ index 99bf5cf79d10..676532f487da 100644
  		if (ret)
  			goto err_cleanup_unregister;
 diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hw.c b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
-index 7b86f324b2e6..dea73fb0febf 100644
+index 7b86f324b..dea73fb0f 100644
 --- a/drivers/net/wireless/ath/ath12k/wifi7/hw.c
 +++ b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
 @@ -505,7 +505,13 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
@@ -77,7 +77,7 @@ index 7b86f324b2e6..dea73fb0febf 100644
  		.rfkill_on_level = 1,
  
 diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
-index b58a607b713f..f384d8dde441 100644
+index b58a607b7..f384d8dde 100644
 --- a/drivers/pci/controller/dwc/pcie-qcom.c
 +++ b/drivers/pci/controller/dwc/pcie-qcom.c
 @@ -1141,39 +1141,87 @@ static void qcom_pcie_deinit_2_7_0(struct qcom_pcie *pcie)

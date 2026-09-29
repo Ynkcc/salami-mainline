@@ -13,7 +13,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  create mode 100644 drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
 
 diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
-index ff8a35df7862..df28d5b98f1a 100644
+index ff8a35df7..df28d5b98 100644
 --- a/Documentation/devicetree/bindings/arm/qcom.yaml
 +++ b/Documentation/devicetree/bindings/arm/qcom.yaml
 @@ -1131,6 +1131,7 @@ properties:
@@ -25,7 +25,7 @@ index ff8a35df7862..df28d5b98f1a 100644
                - qcom,sm8550-mtp
                - qcom,sm8550-qrd
 diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
-index 1c86e7e98f55..88b8c72bdd75 100644
+index 1c86e7e98..88b8c72bd 100644
 --- a/arch/arm64/boot/dts/qcom/Makefile
 +++ b/arch/arm64/boot/dts/qcom/Makefile
 @@ -391,6 +391,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-hdk-display-card.dtb
@@ -37,7 +37,7 @@ index 1c86e7e98f55..88b8c72bdd75 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-samsung-q5q.dtb
  dtb-$(CONFIG_ARCH_QCOM)	+= sm8550-sony-xperia-yodo-pdx234.dtb
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index cbdf7b8f7f7a..89dff6a249bf 100644
+index cbdf7b8f7..89dff6a24 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
 @@ -886,6 +886,16 @@ config DRM_PANEL_RONBO_RB070D30
@@ -58,7 +58,7 @@ index cbdf7b8f7f7a..89dff6a249bf 100644
  	tristate "Samsung AMS581VF01 panel"
  	depends on OF
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index 3b523cf37833..f77597f8df9a 100644
+index 3b523cf37..f77597f8d 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
 @@ -86,6 +86,7 @@ obj-$(CONFIG_DRM_PANEL_RENESAS_R61307) += panel-renesas-r61307.o
@@ -71,7 +71,7 @@ index 3b523cf37833..f77597f8df9a 100644
  obj-$(CONFIG_DRM_PANEL_SAMSUNG_ATNA33XC20) += panel-samsung-atna33xc20.o
 diff --git a/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c b/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
 new file mode 100644
-index 000000000000..973ec1618bf1
+index 000000000..973ec1618
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
 @@ -0,0 +1,420 @@

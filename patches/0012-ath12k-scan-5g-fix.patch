@@ -25,8 +25,8 @@ of the resolved country.
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- drivers/net/wireless/ath/ath12k/reg.c | 46 +++++++++++++++++++++++++++
- drivers/net/wireless/ath/ath12k/wmi.c | 19 +++++++++++
+ drivers/net/wireless/ath/ath12k/reg.c |   46 +++++++++++++++++++++++++++++++++
+ drivers/net/wireless/ath/ath12k/wmi.c |   19 ++++++++++++++
  2 files changed, 65 insertions(+)
 
 diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
@@ -138,6 +138,3 @@ index d5160af60..09dde7572 100644
  }
  
  static void ath12k_wmi_copy_scan_event_cntrl_flags(struct wmi_start_scan_cmd *cmd,
--- 
-2.55.0
-

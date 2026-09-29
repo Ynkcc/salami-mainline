@@ -10,7 +10,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  3 files changed, 52 insertions(+)
 
 diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
-index b5a51b0ef944..4df970b53e5e 100644
+index b5a51b0ef..4df970b53 100644
 --- a/arch/arm64/Kconfig
 +++ b/arch/arm64/Kconfig
 @@ -2477,6 +2477,17 @@ endmenu # "Kernel Features"
@@ -32,7 +32,7 @@ index b5a51b0ef944..4df970b53e5e 100644
  	bool "Enable support for the ARM64 ACPI parking protocol"
  	depends on ACPI
 diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
-index 87a822e5c4ca..2b7145dcb45f 100644
+index 87a822e5c..2b7145dcb 100644
 --- a/arch/arm64/kernel/head.S
 +++ b/arch/arm64/kernel/head.S
 @@ -168,7 +168,30 @@ SYM_CODE_END(record_mmu_state)
@@ -67,7 +67,7 @@ index 87a822e5c4ca..2b7145dcb45f 100644
  	adr_l	x0, boot_args			// record the contents of
  	stp	x21, x1, [x0]			// x0 .. x3 at kernel entry
 diff --git a/arch/arm64/kernel/vmlinux.lds.S b/arch/arm64/kernel/vmlinux.lds.S
-index af1d72020976..0a6091581135 100644
+index af1d72020..0a6091581 100644
 --- a/arch/arm64/kernel/vmlinux.lds.S
 +++ b/arch/arm64/kernel/vmlinux.lds.S
 @@ -171,6 +171,18 @@ PECOFF_FILE_ALIGNMENT = 0x200;

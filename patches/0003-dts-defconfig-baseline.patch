@@ -12,7 +12,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 new file mode 100644
-index 000000000000..6a3af3931880
+index 000000000..6a3af3931
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 @@ -0,0 +1,797 @@
@@ -815,7 +815,7 @@ index 000000000000..6a3af3931880
 +};
 diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
 new file mode 100644
-index 000000000000..2cb1af7d4e84
+index 000000000..2cb1af7d4
 --- /dev/null
 +++ b/arch/arm64/configs/salami_defconfig
 @@ -0,0 +1,996 @@

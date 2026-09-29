@@ -19,7 +19,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  create mode 100644 drivers/input/misc/ist8801-hall.c
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-index ea1704be4934..01e6e9b18743 100644
+index ea1704be4..01e6e9b18 100644
 --- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 @@ -37,6 +37,98 @@ key-vol-down {
@@ -200,7 +200,7 @@ index ea1704be4934..01e6e9b18743 100644
 +    };
 +};
 diff --git a/arch/arm64/boot/dts/qcom/sm8550.dtsi b/arch/arm64/boot/dts/qcom/sm8550.dtsi
-index 0e701e709235..7f7225e397b4 100644
+index 0e701e709..7f7225e39 100644
 --- a/arch/arm64/boot/dts/qcom/sm8550.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm8550.dtsi
 @@ -87,15 +87,28 @@ &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>,
@@ -376,7 +376,7 @@ index 0e701e709235..7f7225e397b4 100644
  			};
  		};
 diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
-index a45f1941ed4c..e2b0dccd9b20 100644
+index a45f1941e..e2b0dccd9 100644
 --- a/arch/arm64/configs/salami_defconfig
 +++ b/arch/arm64/configs/salami_defconfig
 @@ -572,6 +572,7 @@ CONFIG_QCOM_PIL_INFO=y
@@ -431,7 +431,7 @@ index a45f1941ed4c..e2b0dccd9b20 100644
  CONFIG_QCOM_PBS=n
  CONFIG_QCOM_STATS=n
 diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
-index 169768e3d5bb..958d9a176d00 100644
+index 169768e3d..958d9a176 100644
 --- a/drivers/input/misc/Kconfig
 +++ b/drivers/input/misc/Kconfig
 @@ -1023,4 +1023,16 @@ config INPUT_STPMIC1_ONKEY
@@ -452,7 +452,7 @@ index 169768e3d5bb..958d9a176d00 100644
 +
  endif
 diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
-index 1339619f0769..81e39ce040cb 100644
+index 1339619f0..81e39ce04 100644
 --- a/drivers/input/misc/Makefile
 +++ b/drivers/input/misc/Makefile
 @@ -97,3 +97,4 @@ obj-$(CONFIG_INPUT_WM831X_ON)		+= wm831x-on.o
@@ -462,7 +462,7 @@ index 1339619f0769..81e39ce040cb 100644
 +obj-$(CONFIG_INPUT_IST8801_HALL)	+= ist8801-hall.o
 diff --git a/drivers/input/misc/ist8801-hall.c b/drivers/input/misc/ist8801-hall.c
 new file mode 100644
-index 000000000000..8771f9c2255f
+index 000000000..8771f9c22
 --- /dev/null
 +++ b/drivers/input/misc/ist8801-hall.c
 @@ -0,0 +1,395 @@
@@ -862,7 +862,7 @@ index 000000000000..8771f9c2255f
 +MODULE_DESCRIPTION("IST8801 hall sensor support for OnePlus alert sliders");
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
-index 676532f487da..cfc2b14c6baa 100644
+index 676532f48..cfc2b14c6 100644
 --- a/drivers/net/wireless/ath/ath12k/mac.c
 +++ b/drivers/net/wireless/ath/ath12k/mac.c
 @@ -14472,7 +14472,13 @@ ath12k_mac_setup_radio_iface_comb(struct ath12k *ar,

@@ -18,7 +18,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  create mode 100644 drivers/gpu/drm/panel/panel-samsung-amb670yf0x.c
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-index 88aed4704987..64aff3f170c7 100644
+index 88aed4704..64aff3f17 100644
 --- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
 @@ -719,7 +719,7 @@ &uart14 {
@@ -31,7 +31,7 @@ index 88aed4704987..64aff3f170c7 100644
          vddaon-supply = <&vreg_pmu_aon_0p59>;
          vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
 diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
-index 0ca8d83a900f..70a4c8f4c687 100644
+index 0ca8d83a9..70a4c8f4c 100644
 --- a/arch/arm64/configs/salami_defconfig
 +++ b/arch/arm64/configs/salami_defconfig
 @@ -72,6 +72,23 @@ CONFIG_CHECKPOINT_RESTORE=y
@@ -135,7 +135,7 @@ index 0ca8d83a900f..70a4c8f4c687 100644
  CONFIG_RPMSG_VIRTIO=y
  CONFIG_QCOM_CPR=y
 diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
-index b292dfd266d1..75c2191b551f 100644
+index b292dfd26..75c2191b5 100644
 --- a/drivers/gpu/drm/msm/dsi/dsi_host.c
 +++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
 @@ -1908,11 +1908,20 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
@@ -165,7 +165,7 @@ index b292dfd266d1..75c2191b551f 100644
  
  	dsc->initial_scale_value = drm_dsc_initial_scale_value(dsc);
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index 89dff6a249bf..b99574c77a9c 100644
+index 89dff6a24..b99574c77 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
 @@ -886,15 +886,15 @@ config DRM_PANEL_RONBO_RB070D30
@@ -189,7 +189,7 @@ index 89dff6a249bf..b99574c77a9c 100644
  config DRM_PANEL_SAMSUNG_AMS581VF01
  	tristate "Samsung AMS581VF01 panel"
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index f77597f8df9a..2cb21a228736 100644
+index f77597f8d..2cb21a228 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
 @@ -86,7 +86,7 @@ obj-$(CONFIG_DRM_PANEL_RENESAS_R61307) += panel-renesas-r61307.o
@@ -203,7 +203,7 @@ index f77597f8df9a..2cb21a228736 100644
  obj-$(CONFIG_DRM_PANEL_SAMSUNG_ATNA33XC20) += panel-samsung-atna33xc20.o
 diff --git a/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c b/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
 deleted file mode 100644
-index 973ec1618bf1..000000000000
+index 973ec1618..000000000
 --- a/drivers/gpu/drm/panel/panel-samsung-amb670yf07.c
 +++ /dev/null
 @@ -1,420 +0,0 @@
@@ -629,7 +629,7 @@ index 973ec1618bf1..000000000000
 -MODULE_LICENSE("GPL");
 diff --git a/drivers/gpu/drm/panel/panel-samsung-amb670yf0x.c b/drivers/gpu/drm/panel/panel-samsung-amb670yf0x.c
 new file mode 100644
-index 000000000000..6b3e41b228fe
+index 000000000..6b3e41b22
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-samsung-amb670yf0x.c
 @@ -0,0 +1,832 @@

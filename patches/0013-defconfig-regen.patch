@@ -10,7 +10,7 @@ compared to the configuration the tree has been building with.
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- arch/arm64/configs/salami_defconfig | 1000 +++++++++++----------------
+ arch/arm64/configs/salami_defconfig | 1000 ++++++++++++++---------------------
  1 file changed, 405 insertions(+), 595 deletions(-)
 
 diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
@@ -1226,6 +1226,3 @@ index e2b0dccd9..75e3d7ecf 100644
 +CONFIG_TRACER_SNAPSHOT=y
 +CONFIG_MEMTEST=y
 \ No newline at end of file
--- 
-2.55.0
-
