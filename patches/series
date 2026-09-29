@@ -1,4 +1,7 @@
 # This series applies on Git commit 72d3fcf802c45d00b300f25b848a93c3a2bd7c7e
+# 维护方式：salami-mainline master = stgit 栈（stg series 查看）；
+# 改动流程：stg new / stg refresh → stg export -e patch -d ../salami-ports/patches → ports 提交推送
+# 0000-cover-letter.patch 为手工维护，stg export 不会生成/覆盖
 0001-appended-dtb.patch
 0002-panel-amb670yf07.patch
 0003-dts-defconfig-baseline.patch
