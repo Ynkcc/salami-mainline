@@ -10,3 +10,5 @@
 0009-pcie-qcom-ath12k-fix.patch
 0010-defconfig-cmdline-pas.patch
 0011-dts-audio-hall-cache.patch
+0012-ath12k-scan-5g-fix.patch
+0013-defconfig-regen.patch

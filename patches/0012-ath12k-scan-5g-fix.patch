@@ -1,0 +1,143 @@
+wifi: ath12k: keep 5 GHz channels in scan list on WCN7850 phones
+
+From: ynk <evils.ynk@gmail.com>
+
+Mobile WCN7850 firmware resolves the country code through 11d and the
+resulting regulatory events carry only 2G + 5G rules (no 6G rules).
+
+ath12k_regd_update() computed the radio's frequency range from
+reg_freq_6ghz only when supports_6ghz is set. Without 6G rules
+reg_freq_6ghz stays empty, so the range collapsed to 2.4 GHz and
+ath12k_reg_update_chan_list() dropped every 5 GHz channel from the
+WMI_SCAN_CHAN_LIST table. The firmware then refuses to scan 5 GHz
+channels (WMI_SCAN_EVENT_START_FAILED,
+WMI_SCAN_REASON_INTERNAL_FAILURE) and silently truncates mixed-band
+scan requests to the connected band, making the network list alternate
+between 2.4 GHz-only and 5 GHz-only results.
+
+Also re-fetch reg_cap for the 5 GHz phy in the supports_6ghz branch: it
+was left pointing at the 2 GHz phy capabilities by the preceding block,
+which zeroed the computed range even when 6G rules were present.
+
+With the range covering the 5 GHz rules of the current regd, the scan
+channel list includes both bands and scans complete normally regardless
+of the resolved country.
+
+Signed-off-by: ynk <evils.ynk@gmail.com>
+---
+ drivers/net/wireless/ath/ath12k/reg.c | 46 +++++++++++++++++++++++++++
+ drivers/net/wireless/ath/ath12k/wmi.c | 19 +++++++++++
+ 2 files changed, 65 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
+index 89abf2e87..cf7c27b89 100644
+--- a/drivers/net/wireless/ath/ath12k/reg.c
++++ b/drivers/net/wireless/ath/ath12k/reg.c
+@@ -162,8 +162,19 @@ int ath12k_reg_update_chan_list(struct ath12k *ar, bool wait)
+ 
+ 			num_channels++;
+ 		}
++
++		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++			   "chan list: band %d total %d ch, first %u last %u\n",
++			   band, bands[band]->n_channels,
++			   bands[band]->channels[0].center_freq,
++			   bands[band]->channels[bands[band]->n_channels - 1].center_freq);
+ 	}
+ 
++	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++		   "chan list: freq_range %u-%u MHz, num_channels %d\n",
++		   KHZ_TO_MHZ(ar->freq_range.start_freq),
++		   KHZ_TO_MHZ(ar->freq_range.end_freq), num_channels);
++
+ 	if (!num_channels) {
+ 		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+ 			   "pdev is not supported for this country\n");
+@@ -323,12 +334,42 @@ int ath12k_regd_update(struct ath12k *ar, bool init)
+ 	}
+ 
+ 	if (supported_bands & WMI_HOST_WLAN_5GHZ_CAP && ar->supports_6ghz) {
++		/* reg_cap may still point at the 2 GHz phy's capabilities
++		 * from the branch above; re-fetch the 5 GHz phy's.
++		 */
++		if (ab->hw_params->single_pdev_only) {
++			phy_id = ar->pdev->cap.band[WMI_HOST_WLAN_5GHZ_CAP].phy_id;
++			reg_cap = &ab->hal_reg_cap[phy_id];
++		}
++
+ 		freq_low = max(reg_cap->low_5ghz_chan, ab->reg_freq_6ghz.start_freq);
+ 		freq_high = min(reg_cap->high_5ghz_chan, ab->reg_freq_6ghz.end_freq);
+ 
+ 		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
++
++		/* Regulatory events for countries without 6 GHz rules leave
++		 * reg_freq_6ghz empty, which would exclude all 5 GHz channels
++		 * from the range above and subsequently from the scan channel
++		 * list. Also add the range covered by the 5 GHz rules of the
++		 * current regd. ath12k_mac_update_freq_range() only widens the
++		 * range and ignores empty ones, so this is a no-op when the
++		 * 6 GHz rules already cover everything.
++		 */
++		freq_low = max(reg_cap->low_5ghz_chan, ab->reg_freq_5ghz.start_freq);
++		freq_high = min(reg_cap->high_5ghz_chan, ab->reg_freq_5ghz.end_freq);
++
++		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
+ 	}
+ 
++	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++		   "regd update: freq_range %u-%u MHz, supports_6ghz %d, 2g rules %u-%u, 5g rules %u-%u, 6g rules %u-%u\n",
++		   KHZ_TO_MHZ(ar->freq_range.start_freq),
++		   KHZ_TO_MHZ(ar->freq_range.end_freq),
++		   ar->supports_6ghz,
++		   ab->reg_freq_2ghz.start_freq, ab->reg_freq_2ghz.end_freq,
++		   ab->reg_freq_5ghz.start_freq, ab->reg_freq_5ghz.end_freq,
++		   ab->reg_freq_6ghz.start_freq, ab->reg_freq_6ghz.end_freq);
++
+ 	/* If one of the radios within ah has already updated the regd for
+ 	 * the wiphy, then avoid setting regd again
+ 	 */
+@@ -389,6 +430,11 @@ int ath12k_regd_update(struct ath12k *ar, bool init)
+ 		goto err;
+ 	}
+ 
++	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++		   "applying regd %c%c to wiphy, n_reg_rules %d\n",
++		   regd_copy->alpha2[0], regd_copy->alpha2[1],
++		   regd_copy->n_reg_rules);
++
+ 	ret = regulatory_set_wiphy_regd(hw->wiphy, regd_copy);
+ 
+ 	kfree(regd_copy);
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index d5160af60..09dde7572 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -2562,6 +2562,25 @@ void ath12k_wmi_start_scan_init(struct ath12k *ar,
+ 	 * ZEROs in probe request
+ 	 */
+ 	eth_broadcast_addr(arg->bssid_list[0].addr);
++
++	/*
++	 * WCN7850 firmware in smartphones is tuned for the Android qcacld
++	 * driver, which always sets these flags for regular scans (see
++	 * scm_scan_req_update_params() and copy_scan_event_cntrl_flags()
++	 * in qcacld-3.0/qca-wifi-host-cmn).  Without them the firmware
++	 * refuses to schedule scans outside the band of the current
++	 * connection: mixed-band requests are silently truncated to the
++	 * home band and requests containing only foreign-band channels
++	 * fail with WMI_SCAN_EVENT_START_FAILED
++	 * (WMI_SCAN_REASON_INTERNAL_FAILURE).
++	 */
++	if (ar->ab->hw_rev == ATH12K_HW_WCN7850_HW20) {
++		arg->scan_f_cck_rates = true;
++		arg->scan_f_ofdm_rates = true;
++		arg->scan_f_filter_prb_req = true;
++		arg->scan_f_add_ds_ie_in_probe = true;
++		arg->scan_f_add_tpc_ie_in_probe = true;
++	}
+ }
+ 
+ static void ath12k_wmi_copy_scan_event_cntrl_flags(struct wmi_start_scan_cmd *cmd,
+-- 
+2.55.0
+
