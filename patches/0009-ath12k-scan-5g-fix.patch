@@ -30,7 +30,7 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  2 files changed, 65 insertions(+)
 
 diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
-index 89abf2e87..cf7c27b89 100644
+index 89abf2e87ad1..cf7c27b899ed 100644
 --- a/drivers/net/wireless/ath/ath12k/reg.c
 +++ b/drivers/net/wireless/ath/ath12k/reg.c
 @@ -162,8 +162,19 @@ int ath12k_reg_update_chan_list(struct ath12k *ar, bool wait)
@@ -109,7 +109,7 @@ index 89abf2e87..cf7c27b89 100644
  
  	kfree(regd_copy);
 diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
-index d5160af60..09dde7572 100644
+index d5160af60e00..09dde7572307 100644
 --- a/drivers/net/wireless/ath/ath12k/wmi.c
 +++ b/drivers/net/wireless/ath/ath12k/wmi.c
 @@ -2562,6 +2562,25 @@ void ath12k_wmi_start_scan_init(struct ath12k *ar,

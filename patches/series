@@ -4,15 +4,11 @@
 # 0000-cover-letter.patch 为手工维护，stg export 不会生成/覆盖
 # 注意：salami-mainline master 提交哈希随 stgit 操作变化，构建/树内容不受影响
 0001-appended-dtb.patch
-0002-panel-amb670yf07.patch
+0002-panel-amb670yf0x.patch
 0003-dts-defconfig-baseline.patch
 0004-bootloader-log.patch
-0005-dts-powerkey-localversion.patch
-0006-touchscreen-synaptics-tcm.patch
-0007-panel-amb670yf0x.patch
-0008-defconfig-trim.patch
-0009-pcie-qcom-ath12k-fix.patch
-0010-defconfig-cmdline-pas.patch
-0011-dts-audio-hall-cache.patch
-0012-ath12k-scan-5g-fix.patch
-0013-defconfig-regen.patch
+0005-touchscreen-synaptics-tcm.patch
+0006-defconfig.patch
+0007-pcie-qcom-ath12k-fix.patch
+0008-dts-audio-hall-cache.patch
+0009-ath12k-scan-5g-fix.patch
