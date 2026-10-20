@@ -93,10 +93,10 @@ index 000000000000..68479b0b7d70
 +        };
 +    };
 diff --git a/MAINTAINERS b/MAINTAINERS
-index 72294ddfa5b7..78ea7d625c24 100644
+index 782389bd5cd3..d3200bd345fc 100644
 --- a/MAINTAINERS
 +++ b/MAINTAINERS
-@@ -26425,6 +26425,13 @@ S:	Maintained
+@@ -26442,6 +26442,13 @@ S:	Maintained
  F:	Documentation/devicetree/bindings/regulator/silergy,sy8106a.yaml
  F:	drivers/regulator/sy8106a-regulator.c
  

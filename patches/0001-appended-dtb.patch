@@ -10,10 +10,10 @@ Signed-off-by: ynk <evils.ynk@gmail.com>
  3 files changed, 52 insertions(+)
 
 diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
-index b5a51b0ef944..4df970b53e5e 100644
+index cab741a695f5..b3970d681a99 100644
 --- a/arch/arm64/Kconfig
 +++ b/arch/arm64/Kconfig
-@@ -2477,6 +2477,17 @@ endmenu # "Kernel Features"
+@@ -2507,6 +2507,17 @@ endmenu # "Kernel Features"
  
  menu "Boot options"
  

@@ -8,7 +8,7 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 This series brings up the OnePlus 11 (codename "salami", SM8550) on
-mainline Linux, on top of the v7.3-rc5 merge base 72d3fcf802c4.
+mainline Linux, on top of the v7.3 merge base c03c1a14507d.
 
 It adds the device tree and defconfig, the Samsung AMB670YF07/YF08 DSI
 panel driver, the Synaptics TouchComm I2C touchscreen driver, an
