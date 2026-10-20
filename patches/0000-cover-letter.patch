@@ -14,7 +14,7 @@ It adds the device tree and defconfig, the Samsung AMB670YF07/YF08 DSI
 panel driver, the Synaptics TouchComm I2C touchscreen driver, an
 IST8801 hall sensor driver and a Qualcomm bootloader log driver, plus
 the small core hacks still needed downstream (appended DTB support,
-PCIe/ath12k fixes).  The defconfig patch covers trimming, Waydroid
+PCIe/ath12k fixes) and the PMK8550 RTC.  The defconfig patch covers trimming, Waydroid
 enablement (binder/FUSE/overlayfs/nftables NAT) and the kernel command
 line.
 

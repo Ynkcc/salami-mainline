@@ -1,0 +1,39 @@
+arm64: dts: qcom: salami: enable PMK8550 RTC with sdam offset
+
+From: ynk <evils.ynk@gmail.com>
+
+Android never syncs the PMIC RTC to wall time, so it free-runs from
+zero and boots with a bogus epoch.
+
+On this device the SPMI ownership of the RTC peripheral rejects AP
+writes (disallowed SPMI write to sid=0, addr=0x6146), so direct
+allow-set-time writes are not possible.  Store the offset between the
+free-running RTC and wall time in a sdam cell instead; the driver
+updates it when userspace sets the clock and applies it on read.
+---
+ arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |   12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+index 01e6e9b18743..f41846f7b9bb 100644
+--- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
++++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
+@@ -633,6 +633,18 @@ pmk8550_sleep_clk: sleep-clk-state {
+     };
+ };
+ 
++&pmk8550_sdam_2 {
++    rtc_offset: rtc-offset@bc {
++        reg = <0xbc 0x4>;
++    };
++};
++
++&pmk8550_rtc {
++    nvmem-cells = <&rtc_offset>;
++    nvmem-cell-names = "offset";
++    status = "okay";
++};
++
+ &tlmm {
+     bt_en_default: bt-en-default-state {
+         bias-disable;
