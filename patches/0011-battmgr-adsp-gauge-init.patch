@@ -1,0 +1,83 @@
+From a4191a217cc60cc64eb5733cefb281f63afba3bc Mon Sep 17 00:00:00 2001
+From: ynk <evils.ynk@gmail.com>
+Date: Fri, 23 Oct 2026 23:35:25 +0800
+Subject: [PATCH] power: supply: qcom_battmgr: initialize ADSP fuel gauge on
+ OnePlus devices
+
+OnePlus devices (SM8350/SM8550) ship firmware where the ADSP-side
+fuel gauge is only initialized after the AP writes the extended
+BATT_ADSP_GAUGE_INIT property (id 38 in the downstream property enum,
+after BATT_POWER_AVG).  Without it the battery manager reports 0 for
+capacity, current, charge counter and internal resistance, and rejects
+the CHG_FULL_DESIGN/CHG_FULL queries, so userspace sees a permanent
+0% battery (which upower happily turns into spurious critical-battery
+actions).
+
+Mirror the downstream oplus charging stack and write
+BATT_ADSP_GAUGE_INIT=1 once the PMIC glink service comes up, and
+teach the sm8350 callback to parse BATTMGR_BAT_PROPERTY_SET replies
+instead of falling into the unknown-message path.
+---
+ drivers/power/supply/qcom_battmgr.c | 32 +++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 7716eb9e1aff..06dc5fc3f841 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -75,6 +75,13 @@ enum qcom_battmgr_variant {
+ #define BATT_CHG_CTRL_START_THR		25
+ #define BATT_CHG_CTRL_END_THR		26
+ 
++/*
++ * OnePlus firmware extends the property list beyond BATT_POWER_AVG; the
++ * ADSP-side fuel gauge has to be initialized by writing this property
++ * before battery capacity and charge related data become available.
++ */
++#define BATT_ADSP_GAUGE_INIT		38
++
+ #define BATTMGR_USB_PROPERTY_GET	0x32
+ #define BATTMGR_USB_PROPERTY_SET	0x33
+ #define USB_ONLINE			0
+@@ -1556,6 +1563,17 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 			break;
+ 		}
+ 		break;
++	case BATTMGR_BAT_PROPERTY_SET:
++		if (payload_len != sizeof(resp->intval)) {
++			dev_warn(battmgr->dev,
++				 "invalid payload length for %#x request: %zd\n",
++				 opcode, payload_len);
++			battmgr->error = -ENODATA;
++			break;
++		}
++
++		battmgr->error = le32_to_cpu(resp->intval.result);
++		break;
+ 	case BATTMGR_REQUEST_NOTIFICATION:
+ 	case BATTMGR_CHG_CTRL_LIMIT_EN:
+ 		battmgr->error = 0;
+@@ -1597,6 +1615,20 @@ static void qcom_battmgr_enable_worker(struct work_struct *work)
+ 	ret = qcom_battmgr_request(battmgr, &req, sizeof(req));
+ 	if (ret)
+ 		dev_err(battmgr->dev, "failed to request power notifications\n");
++
++	if (battmgr->variant == QCOM_BATTMGR_SM8350 ||
++	    battmgr->variant == QCOM_BATTMGR_SM8550) {
++		/*
++		 * OnePlus devices need the ADSP fuel gauge to be initialized
++		 * before capacity-related properties report valid values.
++		 */
++		mutex_lock(&battmgr->lock);
++		ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_SET,
++						    BATT_ADSP_GAUGE_INIT, 1);
++		mutex_unlock(&battmgr->lock);
++		if (ret)
++			dev_warn(battmgr->dev, "failed to initialize ADSP fuel gauge: %d\n", ret);
++	}
+ }
+ 
+ static void qcom_battmgr_pdr_notify(void *priv, int state)
+-- 
+2.56.0
+

@@ -18,7 +18,7 @@ PCIe/ath12k fixes) and the PMK8550 RTC.  The defconfig patch covers trimming, Wa
 enablement (binder/FUSE/overlayfs/nftables NAT) and the kernel command
 line.
 
-ynk (9):
+ynk (11):
   arm64: boot: Add support for appended device tree blob
   drm/panel: Add Samsung AMB670YF07/YF08 panel driver
   arm64: dts: qcom: Add OnePlus 11 (salami) device tree and defconfig
@@ -28,6 +28,8 @@ ynk (9):
   PCI: qcom: Fix ath12k WiFi bring-up on SM8550
   arm64: dts: qcom: salami: Add audio, hall sensor and cache properties
   wifi: ath12k: keep 5 GHz channels in scan list on WCN7850 phones
+  arm64: dts: qcom: salami: enable PMK8550 RTC with sdam offset
+  power: supply: qcom_battmgr: initialize ADSP fuel gauge on OnePlus devices
 
  Documentation/devicetree/bindings/arm/qcom.yaml    |    1 +
  .../bindings/input/touchscreen/syna,s3908.yaml     |   69 ++

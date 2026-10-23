@@ -9,3 +9,4 @@
 0008-dts-audio-hall-cache.patch
 0009-ath12k-scan-5g-fix.patch
 0010-rtc-allow-set-time.patch
+0011-battmgr-adsp-gauge-init.patch
