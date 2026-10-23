@@ -1,6 +1,8 @@
-wifi: ath12k: keep 5 GHz channels in scan list on WCN7850 phones
-
+From a5a5219d9ad73e08dd371da6a84ad4093373de8a Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 29 Sep 2026 19:26:14 +0800
+Subject: [PATCH 09/11] wifi: ath12k: keep 5 GHz channels in scan list on
+ WCN7850 phones
 
 Mobile WCN7850 firmware resolves the country code through 11d and the
 resulting regulatory events carry only 2G + 5G rules (no 6G rules).
@@ -25,8 +27,8 @@ of the resolved country.
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- drivers/net/wireless/ath/ath12k/reg.c |   46 +++++++++++++++++++++++++++++++++
- drivers/net/wireless/ath/ath12k/wmi.c |   19 ++++++++++++++
+ drivers/net/wireless/ath/ath12k/reg.c | 46 +++++++++++++++++++++++++++
+ drivers/net/wireless/ath/ath12k/wmi.c | 19 +++++++++++
  2 files changed, 65 insertions(+)
 
 diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
@@ -138,3 +140,6 @@ index d5160af60e00..09dde7572307 100644
  }
  
  static void ath12k_wmi_copy_scan_event_cntrl_flags(struct wmi_start_scan_cmd *cmd,
+-- 
+2.56.0
+

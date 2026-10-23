@@ -1,6 +1,10 @@
-drm/panel: Add Samsung AMB670YF07/YF08 panel driver
-
+From 1a9946ae577976fc8361ab8c7bc3654716f49cd1 Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 29 Sep 2026 19:26:10 +0800
+Subject: [PATCH 02/11] drm/panel: Add Samsung AMB670YF07/YF08 panel driver
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 统一 OnePlus 11 的 AMB670YF07/YF08 CS/FS DSC 命令模式面板驱动，新增
 运行时面板 ID 检测以选择对应上电序列；DSI 侧保留面板预置的 DSC RC
@@ -8,10 +12,10 @@ From: ynk <evils.ynk@gmail.com>
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- drivers/gpu/drm/msm/dsi/dsi_host.c               |   19 -
- drivers/gpu/drm/panel/Kconfig                    |   10 
- drivers/gpu/drm/panel/Makefile                   |    1 
- drivers/gpu/drm/panel/panel-samsung-amb670yf0x.c |  832 ++++++++++++++++++++++
+ drivers/gpu/drm/msm/dsi/dsi_host.c            |  19 +-
+ drivers/gpu/drm/panel/Kconfig                 |  10 +
+ drivers/gpu/drm/panel/Makefile                |   1 +
+ .../gpu/drm/panel/panel-samsung-amb670yf0x.c  | 832 ++++++++++++++++++
  4 files changed, 857 insertions(+), 5 deletions(-)
  create mode 100644 drivers/gpu/drm/panel/panel-samsung-amb670yf0x.c
 
@@ -916,3 +920,6 @@ index 000000000000..6b3e41b228fe
 +
 +MODULE_DESCRIPTION("DRM panel driver for Samsung AMB670YF07/AMB670YF08 (OnePlus 11)");
 +MODULE_LICENSE("GPL");
+-- 
+2.56.0
+

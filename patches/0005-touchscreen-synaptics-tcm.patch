@@ -1,18 +1,19 @@
-Input: Add Synaptics TouchComm I2C touchscreen driver
-
+From d77ef03044895087713a5a8d12ce1bba6e63ed65 Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 29 Sep 2026 19:26:11 +0800
+Subject: [PATCH 05/11] Input: Add Synaptics TouchComm I2C touchscreen driver
 
 Link: https://lwn.net/ml/all/20260910070723.347768-3-sevanevorotov29@gmail.com/
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- .../bindings/input/touchscreen/syna,s3908.yaml     |   69 +
- MAINTAINERS                                        |    7 
- arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |   46 +
- arch/arm64/configs/salami_defconfig                |    1 
- drivers/input/touchscreen/Kconfig                  |   15 
- drivers/input/touchscreen/Makefile                 |    1 
- drivers/input/touchscreen/synaptics_tcm_i2c.c      | 1066 ++++++++++++++++++++
+ .../input/touchscreen/syna,s3908.yaml         |   69 ++
+ MAINTAINERS                                   |    7 +
+ .../boot/dts/qcom/sm8550-oneplus-salami.dts   |   46 +-
+ arch/arm64/configs/salami_defconfig           |    1 +
+ drivers/input/touchscreen/Kconfig             |   15 +
+ drivers/input/touchscreen/Makefile            |    1 +
+ drivers/input/touchscreen/synaptics_tcm_i2c.c | 1066 +++++++++++++++++
  7 files changed, 1202 insertions(+), 3 deletions(-)
  create mode 100644 Documentation/devicetree/bindings/input/touchscreen/syna,s3908.yaml
  create mode 100644 drivers/input/touchscreen/synaptics_tcm_i2c.c
@@ -1319,3 +1320,6 @@ index 000000000000..406db582f2c0
 +MODULE_DESCRIPTION("Synaptics TouchComm I2C touchscreen driver");
 +MODULE_AUTHOR("Vsevolod Nevorotov <sevanevorotov29@gmail.com>");
 +MODULE_LICENSE("GPL");
+-- 
+2.56.0
+

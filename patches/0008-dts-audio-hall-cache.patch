@@ -1,6 +1,11 @@
-arm64: dts: qcom: salami: Add audio, hall sensor and cache properties
-
+From 65ef16dca4c7df15247c8a0f2d3ea897b2523ce4 Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 29 Sep 2026 19:26:13 +0800
+Subject: [PATCH 08/11] arm64: dts: qcom: salami: Add audio, hall sensor and
+ cache properties
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 新增 OnePlus 11 (salami) 的 WCD9385 音频编解码器与声卡配置、
 IST8801 霍尔传感器驱动以支持三段式静音键、MPSS/IPA 固件节点，
@@ -8,12 +13,12 @@ IST8801 霍尔传感器驱动以支持三段式静音键、MPSS/IPA 固件节点
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |  152 ++++++++
- arch/arm64/boot/dts/qcom/sm8550.dtsi               |   79 ++++
- drivers/input/misc/Kconfig                         |   12 +
- drivers/input/misc/Makefile                        |    1 
- drivers/input/misc/ist8801-hall.c                  |  395 ++++++++++++++++++++
- drivers/net/wireless/ath/ath12k/mac.c              |    8 
+ .../boot/dts/qcom/sm8550-oneplus-salami.dts   | 152 +++++++
+ arch/arm64/boot/dts/qcom/sm8550.dtsi          |  79 ++++
+ drivers/input/misc/Kconfig                    |  12 +
+ drivers/input/misc/Makefile                   |   1 +
+ drivers/input/misc/ist8801-hall.c             | 395 ++++++++++++++++++
+ drivers/net/wireless/ath/ath12k/mac.c         |   8 +-
  6 files changed, 646 insertions(+), 1 deletion(-)
  create mode 100644 drivers/input/misc/ist8801-hall.c
 
@@ -824,3 +829,6 @@ index 676532f487da..cfc2b14c6baa 100644
  	limits[0].types |= BIT(NL80211_IFTYPE_STATION);
  
  	if (ap || mesh || p2p)
+-- 
+2.56.0
+

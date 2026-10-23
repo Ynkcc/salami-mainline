@@ -1,6 +1,10 @@
-PCI: qcom: Fix ath12k WiFi bring-up on SM8550
-
+From ec90b453bbf9c3ffbe1640a0e79e3e2683244860 Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 29 Sep 2026 19:26:12 +0800
+Subject: [PATCH 07/11] PCI: qcom: Fix ath12k WiFi bring-up on SM8550
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 修复 iommu-map 解析以支持可变 cells。根据 IOMMU 的 #iommu-cells 动态推导 iommu-map 步长，避免固定 4 cell 解析导致后续条目错位并使端点 BDF 丢失。
 
@@ -8,10 +12,10 @@ From: ynk <evils.ynk@gmail.com>
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |    2 
- drivers/net/wireless/ath/ath12k/mac.c              |   12 +++
- drivers/net/wireless/ath/ath12k/wifi7/hw.c         |    8 ++
- drivers/pci/controller/dwc/pcie-qcom.c             |   91 ++++++++++++++++----
+ .../boot/dts/qcom/sm8550-oneplus-salami.dts   |  2 +
+ drivers/net/wireless/ath/ath12k/mac.c         | 12 +++
+ drivers/net/wireless/ath/ath12k/wifi7/hw.c    |  8 +-
+ drivers/pci/controller/dwc/pcie-qcom.c        | 91 +++++++++++++++----
  4 files changed, 93 insertions(+), 20 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
@@ -213,3 +217,6 @@ index b58a607b713f..f384d8dde441 100644
  	}
  
  	kfree(map);
+-- 
+2.56.0
+

@@ -1,6 +1,11 @@
-arm64: dts: qcom: Add OnePlus 11 (salami) device tree and defconfig
-
+From 86de431b1e929364ea5e62bb75241e64abfb14db Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 29 Sep 2026 19:26:10 +0800
+Subject: [PATCH 03/11] arm64: dts: qcom: Add OnePlus 11 (salami) device tree
+ and defconfig
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 新增 OnePlus 11 (salami) 设备树与 salami_defconfig 基线，注册 board
 兼容属性与 dtb 构建，启用电源键并固定 LOCALVERSION_AUTO，蓝牙使用
@@ -8,10 +13,10 @@ From: ynk <evils.ynk@gmail.com>
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- Documentation/devicetree/bindings/arm/qcom.yaml    |    1 
- arch/arm64/boot/dts/qcom/Makefile                  |    1 
- arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |  801 ++++++++++++++++
- arch/arm64/configs/salami_defconfig                |  997 ++++++++++++++++++++
+ .../devicetree/bindings/arm/qcom.yaml         |   1 +
+ arch/arm64/boot/dts/qcom/Makefile             |   1 +
+ .../boot/dts/qcom/sm8550-oneplus-salami.dts   | 801 ++++++++++++++
+ arch/arm64/configs/salami_defconfig           | 997 ++++++++++++++++++
  4 files changed, 1800 insertions(+)
  create mode 100644 arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
  create mode 100644 arch/arm64/configs/salami_defconfig
@@ -1850,3 +1855,6 @@ index 000000000000..436c2dd8300f
 +CONFIG_EXTCON_USBC_CROS_EC=y
 +CONFIG_RESET_RZG2L_USBPHY_CTRL=y
 +
+-- 
+2.56.0
+

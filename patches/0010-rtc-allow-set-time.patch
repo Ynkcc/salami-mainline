@@ -1,6 +1,8 @@
-arm64: dts: qcom: salami: enable PMK8550 RTC with sdam offset
-
+From da32aaed117b3ab1b42e53e124ecfebe5ee277fa Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 20 Oct 2026 22:10:34 +0800
+Subject: [PATCH 10/11] arm64: dts: qcom: salami: enable PMK8550 RTC with sdam
+ offset
 
 Android never syncs the PMIC RTC to wall time, so it free-runs from
 zero and boots with a bogus epoch.
@@ -11,7 +13,7 @@ allow-set-time writes are not possible.  Store the offset between the
 free-running RTC and wall time in a sdam cell instead; the driver
 updates it when userspace sets the clock and applies it on read.
 ---
- arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts |   12 ++++++++++++
+ arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts | 12 ++++++++++++
  1 file changed, 12 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
@@ -37,3 +39,6 @@ index 01e6e9b18743..f41846f7b9bb 100644
  &tlmm {
      bt_en_default: bt-en-default-state {
          bias-disable;
+-- 
+2.56.0
+

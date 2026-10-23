@@ -1,8 +1,8 @@
-From a4191a217cc60cc64eb5733cefb281f63afba3bc Mon Sep 17 00:00:00 2001
+From 95f16cdb02858efa4904043e010db0e5d39574ab Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
 Date: Fri, 23 Oct 2026 23:35:25 +0800
-Subject: [PATCH] power: supply: qcom_battmgr: initialize ADSP fuel gauge on
- OnePlus devices
+Subject: [PATCH 11/11] power: supply: qcom_battmgr: initialize ADSP fuel gauge
+ on OnePlus devices
 
 OnePlus devices (SM8350/SM8550) ship firmware where the ADSP-side
 fuel gauge is only initialized after the AP writes the extended

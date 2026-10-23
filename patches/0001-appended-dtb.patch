@@ -1,12 +1,13 @@
-arm64: boot: Add support for appended device tree blob
-
+From e28dd6537db72f55f4dece7a0d6d1e38eb180dde Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
+Date: Tue, 29 Sep 2026 19:26:09 +0800
+Subject: [PATCH 01/11] arm64: boot: Add support for appended device tree blob
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- arch/arm64/Kconfig              |   11 +++++++++++
- arch/arm64/kernel/head.S        |   23 +++++++++++++++++++++++
- arch/arm64/kernel/vmlinux.lds.S |   18 ++++++++++++++++++
+ arch/arm64/Kconfig              | 11 +++++++++++
+ arch/arm64/kernel/head.S        | 23 +++++++++++++++++++++++
+ arch/arm64/kernel/vmlinux.lds.S | 18 ++++++++++++++++++
  3 files changed, 52 insertions(+)
 
 diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
@@ -104,3 +105,6 @@ index af1d72020976..0a6091581135 100644
  	/* start of zero-init region */
  	BSS_SECTION(SBSS_ALIGN, 0, PAGE_SIZE)
  	__pi___bss_start = __bss_start;
+-- 
+2.56.0
+
