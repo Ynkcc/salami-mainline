@@ -1,47 +1,43 @@
-From 95f16cdb02858efa4904043e010db0e5d39574ab Mon Sep 17 00:00:00 2001
+From 9b69a60808034e331cd14fd876218346382ae6a3 Mon Sep 17 00:00:00 2001
 From: ynk <evils.ynk@gmail.com>
-Date: Sat, 24 Oct 2026 01:25:16 +0800
-Subject: [PATCH 00/11] OnePlus 11 (salami) mainline enablement
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
+Date: Sat, 28 Nov 2026 00:42:01 +0800
+Subject: [PATCH 00/10] OnePlus 11 (salami) mainline enablement
 
 This series brings up the OnePlus 11 (codename "salami", SM8550) on
 mainline Linux, on top of the v7.3 merge base c03c1a14507d.
 
-It adds the device tree and defconfig, the Samsung AMB670YF07/YF08 DSI
-panel driver, the Synaptics TouchComm I2C touchscreen driver, an
-IST8801 hall sensor driver and a Qualcomm bootloader log driver, plus
-the small core hacks still needed downstream (appended DTB support,
-PCIe/ath12k fixes), the PMK8550 RTC, and the qcom_battmgr ADSP fuel
-gauge initialization that restores valid battery capacity reporting
-and enables USB PD via UCSI in the defconfig.
+Patches are grouped by function: appended-DTB boot support, the Samsung
+AMB670YF07/YF08 DSI panel driver, the board device tree, a consolidated
+salami_defconfig, touchscreen and hall sensor drivers, ath12k/PCIe WiFi
+fixes, bootloader and TZ/HYP log readers, the qcom_battmgr ADSP fuel gauge
+initialization, the IPA/modem cellular data path and eSIM GPIO support.
 
-ynk (11):
+ynk (10):
   arm64: boot: Add support for appended device tree blob
   drm/panel: Add Samsung AMB670YF07/YF08 panel driver
-  arm64: dts: qcom: Add OnePlus 11 (salami) device tree and defconfig
-  soc: qcom: Add bootloader log driver
-  Input: Add Synaptics TouchComm I2C touchscreen driver
-  arm64: configs: salami: Trim, Waydroid enablement and regenerate
-    defconfig
-  PCI: qcom: Fix ath12k WiFi bring-up on SM8550
-  arm64: dts: qcom: salami: Add audio, hall sensor and cache properties
-  wifi: ath12k: keep 5 GHz channels in scan list on WCN7850 phones
-  arm64: dts: qcom: salami: enable PMK8550 RTC with sdam offset
+  arm64: dts: qcom: Add OnePlus 11 (salami) device tree
+  arm64: configs: salami: Add defconfig
+  input: Add salami touchscreen and hall sensor drivers
+  wifi: ath12k: fix WiFi bring-up and 5 GHz scanning on SM8550
+  soc: qcom: add bootloader and TZ/HYP log readers
   power: supply: qcom_battmgr: initialize ADSP fuel gauge on OnePlus
     devices
+  salami: enable cellular data path
+  salami: add eSIM GPIO support
 
  .../devicetree/bindings/arm/qcom.yaml         |    1 +
  .../input/touchscreen/syna,s3908.yaml         |   69 ++
  MAINTAINERS                                   |    7 +
  arch/arm64/Kconfig                            |   11 +
  arch/arm64/boot/dts/qcom/Makefile             |    1 +
- .../boot/dts/qcom/sm8550-oneplus-salami.dts   | 1022 ++++++++++++++++
+ .../boot/dts/qcom/sm8550-oneplus-salami.dts   | 1074 +++++++++++++++++
  arch/arm64/boot/dts/qcom/sm8550.dtsi          |   79 ++
- arch/arm64/configs/salami_defconfig           |  642 ++++++++++
+ arch/arm64/configs/salami_defconfig           |  654 ++++++++++
  arch/arm64/kernel/head.S                      |   23 +
  arch/arm64/kernel/vmlinux.lds.S               |   18 +
+ drivers/firmware/qcom/Kconfig                 |   10 +
+ drivers/firmware/qcom/Makefile                |    1 +
+ drivers/firmware/qcom/tz_log.c                |  283 +++++
  drivers/gpu/drm/msm/dsi/dsi_host.c            |   19 +-
  drivers/gpu/drm/panel/Kconfig                 |   10 +
  drivers/gpu/drm/panel/Makefile                |    1 +
@@ -51,7 +47,14 @@ ynk (11):
  drivers/input/misc/ist8801-hall.c             |  395 ++++++
  drivers/input/touchscreen/Kconfig             |   15 +
  drivers/input/touchscreen/Makefile            |    1 +
- drivers/input/touchscreen/synaptics_tcm_i2c.c | 1066 +++++++++++++++++
+ drivers/input/touchscreen/synaptics_tcm_i2c.c | 1066 ++++++++++++++++
+ drivers/misc/Kconfig                          |    8 +
+ drivers/misc/Makefile                         |    1 +
+ drivers/misc/oplus_esim_gpio.c                |   56 +
+ drivers/net/ipa/ipa_mem.c                     |   11 +
+ drivers/net/ipa/ipa_qmi.c                     |   50 +-
+ drivers/net/ipa/ipa_qmi_msg.c                 |  100 ++
+ drivers/net/ipa/ipa_qmi_msg.h                 |   22 +-
  drivers/net/wireless/ath/ath12k/mac.c         |   20 +-
  drivers/net/wireless/ath/ath12k/reg.c         |   46 +
  drivers/net/wireless/ath/ath12k/wifi7/hw.c    |    8 +-
@@ -61,13 +64,15 @@ ynk (11):
  drivers/soc/qcom/Kconfig                      |    9 +
  drivers/soc/qcom/Makefile                     |    1 +
  drivers/soc/qcom/bootloader_log.c             |  137 +++
- 29 files changed, 4562 insertions(+), 26 deletions(-)
+ 39 files changed, 5165 insertions(+), 29 deletions(-)
  create mode 100644 Documentation/devicetree/bindings/input/touchscreen/syna,s3908.yaml
  create mode 100644 arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
  create mode 100644 arch/arm64/configs/salami_defconfig
+ create mode 100644 drivers/firmware/qcom/tz_log.c
  create mode 100644 drivers/gpu/drm/panel/panel-samsung-amb670yf0x.c
  create mode 100644 drivers/input/misc/ist8801-hall.c
  create mode 100644 drivers/input/touchscreen/synaptics_tcm_i2c.c
+ create mode 100644 drivers/misc/oplus_esim_gpio.c
  create mode 100644 drivers/soc/qcom/bootloader_log.c
 
 -- 

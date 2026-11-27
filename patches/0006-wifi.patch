@@ -1,38 +1,20 @@
-From ec90b453bbf9c3ffbe1640a0e79e3e2683244860 Mon Sep 17 00:00:00 2001
+wifi: ath12k: fix WiFi bring-up and 5 GHz scanning on SM8550
+
 From: ynk <evils.ynk@gmail.com>
-Date: Tue, 29 Sep 2026 19:26:12 +0800
-Subject: [PATCH 07/11] PCI: qcom: Fix ath12k WiFi bring-up on SM8550
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
 
-修复 iommu-map 解析以支持可变 cells。根据 IOMMU 的 #iommu-cells 动态推导 iommu-map 步长，避免固定 4 cell 解析导致后续条目错位并使端点 BDF 丢失。
-
-同时为 ath12k 添加从 DT 读取 MAC 地址的支持，并在 OnePlus 11 (salami) 上禁用未接线的 rfkill 引脚，添加占位 MAC。
+Fix variable-cell iommu-map parsing in the qcom PCIe controller, read the ath12k MAC address from DT with a placeholder for salami, disable the unconnected rfkill line, and keep 5 GHz channels in scan lists when the regulatory domain has no 6G rules.
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- .../boot/dts/qcom/sm8550-oneplus-salami.dts   |  2 +
- drivers/net/wireless/ath/ath12k/mac.c         | 12 +++
- drivers/net/wireless/ath/ath12k/wifi7/hw.c    |  8 +-
- drivers/pci/controller/dwc/pcie-qcom.c        | 91 +++++++++++++++----
- 4 files changed, 93 insertions(+), 20 deletions(-)
+ drivers/net/wireless/ath/ath12k/mac.c      |   20 ++++++
+ drivers/net/wireless/ath/ath12k/reg.c      |   46 ++++++++++++++
+ drivers/net/wireless/ath/ath12k/wifi7/hw.c |    8 ++
+ drivers/net/wireless/ath/ath12k/wmi.c      |   19 ++++++
+ drivers/pci/controller/dwc/pcie-qcom.c     |   91 ++++++++++++++++++++++------
+ 5 files changed, 163 insertions(+), 21 deletions(-)
 
-diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-index 64aff3f170c7..ea1704be4934 100644
---- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-+++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-@@ -606,6 +606,8 @@ wifi@0 {
-         compatible = "pci17cb,1107";
-         reg = <0x10000 0x0 0x0 0x0 0x0>;
-         status = "okay";
-+        /* placeholder locally-administered MAC; replace with the label MAC if found */
-+        local-mac-address = [7a 7a 7a 7a 7a 7a];
-         vddaon-supply = <&vreg_pmu_aon_0p59>;
-         vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
-         vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
 diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
-index 99bf5cf79d10..676532f487da 100644
+index 99bf5cf79d10..cfc2b14c6baa 100644
 --- a/drivers/net/wireless/ath/ath12k/mac.c
 +++ b/drivers/net/wireless/ath/ath12k/mac.c
 @@ -7,6 +7,7 @@
@@ -43,7 +25,22 @@ index 99bf5cf79d10..676532f487da 100644
  
  #include "mac.h"
  #include "core.h"
-@@ -14828,6 +14829,17 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
+@@ -14471,7 +14472,13 @@ ath12k_mac_setup_radio_iface_comb(struct ath12k *ar,
+ 	if (!limits)
+ 		return -ENOMEM;
+ 
+-	limits[0].max = 1;
++	/* salami: allow STA + AP concurrency — firmware supports it (vdevs are
++	 * created lazily, and AP + STA vdev coexistence is validated); upstream
++	 * limit of 1 STA blocks NetworkManager from managing a second vif,
++	 * which is required for the KDE/NM hotspot toggle to run the AP on a
++	 * separate interface while the STA stays connected.
++	 */
++	limits[0].max = 2;
+ 	limits[0].types |= BIT(NL80211_IFTYPE_STATION);
+ 
+ 	if (ap || mesh || p2p)
+@@ -14828,6 +14835,17 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
  			ar->mac_addr[4] += ar->pdev_idx;
  		}
  
@@ -61,6 +58,85 @@ index 99bf5cf79d10..676532f487da 100644
  		ret = ath12k_mac_setup_register(ar, &ht_cap_info, hw->wiphy->bands);
  		if (ret)
  			goto err_cleanup_unregister;
+diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
+index 89abf2e87ad1..cf7c27b899ed 100644
+--- a/drivers/net/wireless/ath/ath12k/reg.c
++++ b/drivers/net/wireless/ath/ath12k/reg.c
+@@ -162,8 +162,19 @@ int ath12k_reg_update_chan_list(struct ath12k *ar, bool wait)
+ 
+ 			num_channels++;
+ 		}
++
++		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++			   "chan list: band %d total %d ch, first %u last %u\n",
++			   band, bands[band]->n_channels,
++			   bands[band]->channels[0].center_freq,
++			   bands[band]->channels[bands[band]->n_channels - 1].center_freq);
+ 	}
+ 
++	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++		   "chan list: freq_range %u-%u MHz, num_channels %d\n",
++		   KHZ_TO_MHZ(ar->freq_range.start_freq),
++		   KHZ_TO_MHZ(ar->freq_range.end_freq), num_channels);
++
+ 	if (!num_channels) {
+ 		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+ 			   "pdev is not supported for this country\n");
+@@ -323,12 +334,42 @@ int ath12k_regd_update(struct ath12k *ar, bool init)
+ 	}
+ 
+ 	if (supported_bands & WMI_HOST_WLAN_5GHZ_CAP && ar->supports_6ghz) {
++		/* reg_cap may still point at the 2 GHz phy's capabilities
++		 * from the branch above; re-fetch the 5 GHz phy's.
++		 */
++		if (ab->hw_params->single_pdev_only) {
++			phy_id = ar->pdev->cap.band[WMI_HOST_WLAN_5GHZ_CAP].phy_id;
++			reg_cap = &ab->hal_reg_cap[phy_id];
++		}
++
+ 		freq_low = max(reg_cap->low_5ghz_chan, ab->reg_freq_6ghz.start_freq);
+ 		freq_high = min(reg_cap->high_5ghz_chan, ab->reg_freq_6ghz.end_freq);
+ 
+ 		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
++
++		/* Regulatory events for countries without 6 GHz rules leave
++		 * reg_freq_6ghz empty, which would exclude all 5 GHz channels
++		 * from the range above and subsequently from the scan channel
++		 * list. Also add the range covered by the 5 GHz rules of the
++		 * current regd. ath12k_mac_update_freq_range() only widens the
++		 * range and ignores empty ones, so this is a no-op when the
++		 * 6 GHz rules already cover everything.
++		 */
++		freq_low = max(reg_cap->low_5ghz_chan, ab->reg_freq_5ghz.start_freq);
++		freq_high = min(reg_cap->high_5ghz_chan, ab->reg_freq_5ghz.end_freq);
++
++		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
+ 	}
+ 
++	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++		   "regd update: freq_range %u-%u MHz, supports_6ghz %d, 2g rules %u-%u, 5g rules %u-%u, 6g rules %u-%u\n",
++		   KHZ_TO_MHZ(ar->freq_range.start_freq),
++		   KHZ_TO_MHZ(ar->freq_range.end_freq),
++		   ar->supports_6ghz,
++		   ab->reg_freq_2ghz.start_freq, ab->reg_freq_2ghz.end_freq,
++		   ab->reg_freq_5ghz.start_freq, ab->reg_freq_5ghz.end_freq,
++		   ab->reg_freq_6ghz.start_freq, ab->reg_freq_6ghz.end_freq);
++
+ 	/* If one of the radios within ah has already updated the regd for
+ 	 * the wiphy, then avoid setting regd again
+ 	 */
+@@ -389,6 +430,11 @@ int ath12k_regd_update(struct ath12k *ar, bool init)
+ 		goto err;
+ 	}
+ 
++	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
++		   "applying regd %c%c to wiphy, n_reg_rules %d\n",
++		   regd_copy->alpha2[0], regd_copy->alpha2[1],
++		   regd_copy->n_reg_rules);
++
+ 	ret = regulatory_set_wiphy_regd(hw->wiphy, regd_copy);
+ 
+ 	kfree(regd_copy);
 diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hw.c b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
 index 7b86f324b2e6..dea73fb0febf 100644
 --- a/drivers/net/wireless/ath/ath12k/wifi7/hw.c
@@ -80,6 +156,36 @@ index 7b86f324b2e6..dea73fb0febf 100644
  		.rfkill_cfg = 0,
  		.rfkill_on_level = 1,
  
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+index d5160af60e00..09dde7572307 100644
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -2562,6 +2562,25 @@ void ath12k_wmi_start_scan_init(struct ath12k *ar,
+ 	 * ZEROs in probe request
+ 	 */
+ 	eth_broadcast_addr(arg->bssid_list[0].addr);
++
++	/*
++	 * WCN7850 firmware in smartphones is tuned for the Android qcacld
++	 * driver, which always sets these flags for regular scans (see
++	 * scm_scan_req_update_params() and copy_scan_event_cntrl_flags()
++	 * in qcacld-3.0/qca-wifi-host-cmn).  Without them the firmware
++	 * refuses to schedule scans outside the band of the current
++	 * connection: mixed-band requests are silently truncated to the
++	 * home band and requests containing only foreign-band channels
++	 * fail with WMI_SCAN_EVENT_START_FAILED
++	 * (WMI_SCAN_REASON_INTERNAL_FAILURE).
++	 */
++	if (ar->ab->hw_rev == ATH12K_HW_WCN7850_HW20) {
++		arg->scan_f_cck_rates = true;
++		arg->scan_f_ofdm_rates = true;
++		arg->scan_f_filter_prb_req = true;
++		arg->scan_f_add_ds_ie_in_probe = true;
++		arg->scan_f_add_tpc_ie_in_probe = true;
++	}
+ }
+ 
+ static void ath12k_wmi_copy_scan_event_cntrl_flags(struct wmi_start_scan_cmd *cmd,
 diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
 index b58a607b713f..f384d8dde441 100644
 --- a/drivers/pci/controller/dwc/pcie-qcom.c
@@ -217,6 +323,3 @@ index b58a607b713f..f384d8dde441 100644
  	}
  
  	kfree(map);
--- 
-2.56.0
-

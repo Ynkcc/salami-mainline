@@ -1,24 +1,12 @@
-From 95f16cdb02858efa4904043e010db0e5d39574ab Mon Sep 17 00:00:00 2001
+power: supply: qcom_battmgr: initialize ADSP fuel gauge on OnePlus devices
+
 From: ynk <evils.ynk@gmail.com>
-Date: Fri, 23 Oct 2026 23:35:25 +0800
-Subject: [PATCH 11/11] power: supply: qcom_battmgr: initialize ADSP fuel gauge
- on OnePlus devices
 
-OnePlus devices (SM8350/SM8550) ship firmware where the ADSP-side
-fuel gauge is only initialized after the AP writes the extended
-BATT_ADSP_GAUGE_INIT property (id 38 in the downstream property enum,
-after BATT_POWER_AVG).  Without it the battery manager reports 0 for
-capacity, current, charge counter and internal resistance, and rejects
-the CHG_FULL_DESIGN/CHG_FULL queries, so userspace sees a permanent
-0% battery (which upower happily turns into spurious critical-battery
-actions).
+Write BATT_ADSP_GAUGE_INIT once the PMIC glink service is up and parse BATTMGR_BAT_PROPERTY_SET replies, restoring valid battery capacity reporting on OnePlus devices.
 
-Mirror the downstream oplus charging stack and write
-BATT_ADSP_GAUGE_INIT=1 once the PMIC glink service comes up, and
-teach the sm8350 callback to parse BATTMGR_BAT_PROPERTY_SET replies
-instead of falling into the unknown-message path.
+Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- drivers/power/supply/qcom_battmgr.c | 32 +++++++++++++++++++++++++++++
+ drivers/power/supply/qcom_battmgr.c |   32 ++++++++++++++++++++++++++++++++
  1 file changed, 32 insertions(+)
 
 diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
@@ -78,6 +66,3 @@ index 7716eb9e1aff..06dc5fc3f841 100644
  }
  
  static void qcom_battmgr_pdr_notify(void *priv, int state)
--- 
-2.56.0
-

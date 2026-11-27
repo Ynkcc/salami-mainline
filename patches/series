@@ -1,12 +1,11 @@
 # This series applies on Git commit c03c1a14507dfaf8b856c2608f9ac216021fc222
 0001-appended-dtb.patch
 0002-panel-amb670yf0x.patch
-0003-dts-defconfig-baseline.patch
-0004-bootloader-log.patch
-0005-touchscreen-synaptics-tcm.patch
-0006-defconfig.patch
-0007-pcie-qcom-ath12k-fix.patch
-0008-dts-audio-hall-cache.patch
-0009-ath12k-scan-5g-fix.patch
-0010-rtc-allow-set-time.patch
-0011-battmgr-adsp-gauge-init.patch
+0003-dts-salami.patch
+0004-defconfig.patch
+0005-input-drivers.patch
+0006-wifi.patch
+0007-debug-logs.patch
+0008-battmgr.patch
+0009-cellular-data.patch
+0010-esim-gpio.patch

@@ -1,0 +1,515 @@
+soc: qcom: add bootloader and TZ/HYP log readers
+
+From: ynk <evils.ynk@gmail.com>
+
+Expose the bootloader log and Qualcomm hypervisor diagnostic ring buffers (/proc/tzdbg/hyp_log, /proc/tzdbg/hyp_general) on salami.
+
+Signed-off-by: ynk <evils.ynk@gmail.com>
+---
+ drivers/firmware/qcom/Kconfig     |   10 +
+ drivers/firmware/qcom/Makefile    |    1 
+ drivers/firmware/qcom/tz_log.c    |  283 +++++++++++++++++++++++++++++++++++++
+ drivers/soc/qcom/Kconfig          |    9 +
+ drivers/soc/qcom/Makefile         |    1 
+ drivers/soc/qcom/bootloader_log.c |  137 ++++++++++++++++++
+ 6 files changed, 441 insertions(+)
+ create mode 100644 drivers/firmware/qcom/tz_log.c
+ create mode 100644 drivers/soc/qcom/bootloader_log.c
+
+diff --git a/drivers/firmware/qcom/Kconfig b/drivers/firmware/qcom/Kconfig
+index c7f8413ab996..4edc13cfd553 100644
+--- a/drivers/firmware/qcom/Kconfig
++++ b/drivers/firmware/qcom/Kconfig
+@@ -78,6 +78,16 @@ config QCOM_QSEECOM
+ 
+ 	  Select Y here to enable the QSEECOM interface driver.
+ 
++config QCOM_TZ_LOG
++	tristate "Qualcomm TZ/HYP log reader"
++	depends on PROC_FS
++	help
++	  Expose the hypervisor (HYP/EL2) diagnostic ring buffer through
++	  /proc/tzdbg/hyp_log and /proc/tzdbg/hyp_general. The physical address
++	  and size of the buffer are read from the IMEM cookie area described
++	  by a "qcom,tz-log" device tree node. Only the HYP path of the vendor
++	  tz_log driver is ported; QSEE/encrypted logs are not supported.
++
+ config QCOM_QSEECOM_UEFISECAPP
+ 	bool "Qualcomm SEE UEFI Secure App client driver"
+ 	depends on QCOM_QSEECOM
+diff --git a/drivers/firmware/qcom/Makefile b/drivers/firmware/qcom/Makefile
+index 88ce74d74c3e..8a87bda7f921 100644
+--- a/drivers/firmware/qcom/Makefile
++++ b/drivers/firmware/qcom/Makefile
+@@ -7,6 +7,7 @@ obj-$(CONFIG_QCOM_SCM)		+= qcom-scm.o
+ qcom-scm-objs += qcom_scm.o qcom_scm-smc.o qcom_scm-legacy.o
+ CFLAGS_qcom_scm-smc.o := -I$(src)
+ obj-$(CONFIG_QCOM_TZMEM)	+= qcom_tzmem.o
++obj-$(CONFIG_QCOM_TZ_LOG)	+= tz_log.o
+ obj-$(CONFIG_QCOM_QSEECOM)	+= qcom_qseecom.o
+ obj-$(CONFIG_QCOM_QSEECOM_UEFISECAPP) += qcom_qseecom_uefisecapp.o
+ obj-$(CONFIG_QCOM_PAS)		+= qcom_pas.o
+diff --git a/drivers/firmware/qcom/tz_log.c b/drivers/firmware/qcom/tz_log.c
+new file mode 100644
+index 000000000000..029111eff400
+--- /dev/null
++++ b/drivers/firmware/qcom/tz_log.c
+@@ -0,0 +1,283 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Minimal Qualcomm TZ/HYP diagnostic log reader.
++ *
++ * The hypervisor (EL2) keeps its diagnostic ring buffer in DDR.  The IMEM
++ * cookie area described by the "qcom,tz-log" device tree node contains the
++ * physical address and size of that buffer at the offsets given by the
++ * "hyplog-address-offset" / "hyplog-size-offset" properties.
++ *
++ * This driver exposes the ring buffer as /proc/tzdbg/hyp_log and a short
++ * status summary as /proc/tzdbg/hyp_general.  It is a stripped-down port of
++ * the vendor tz_log driver: only the HYP path is kept, so no ion, shmbridge,
++ * QSEECOM or encrypted-log support is needed.
++ */
++
++#include <linux/device.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#include <linux/slab.h>
++#include <linux/types.h>
++
++#define TZDBG_MAX_CPUS		8
++#define HYP_LOG_MAX_SIZE	(4 * 1024 * 1024)
++
++struct hypdbg_log_pos {
++	u16	wrap;
++	u16	offset;
++};
++
++struct hypdbg_boot_info {
++	u32	warm_entry_cnt;
++	u32	warm_exit_cnt;
++};
++
++/* Layout copied from the vendor tz_log driver. */
++struct hypdbg_header {
++	u32	magic_num;
++	u32	cpu_count;
++	u32	ring_off;
++	struct hypdbg_log_pos log_pos;
++	u32	log_len;
++	u32	s2_fault_counter;
++	struct hypdbg_boot_info boot_info[TZDBG_MAX_CPUS];
++	u8	log_buf[];
++};
++
++struct qcom_tzlog {
++	struct device		*dev;
++	void __iomem		*imem;
++	void __iomem		*hyp;
++	size_t			 hyp_size;
++	size_t			 ring_off;
++	size_t			 ring_len;
++	u8			*snapshot;
++	u8			*display;
++	struct proc_dir_entry	*dir;
++	struct mutex		 lock;
++};
++
++static struct qcom_tzlog *tzlog;
++
++static struct hypdbg_header *tzlog_read_header(struct qcom_tzlog *tz)
++{
++	memcpy_fromio(tz->snapshot, tz->hyp, tz->hyp_size);
++	return (struct hypdbg_header *)tz->snapshot;
++}
++
++static int hyp_log_show(struct seq_file *m, void *v)
++{
++	struct qcom_tzlog *tz = m->private;
++	struct hypdbg_header *hdr;
++	size_t off;
++
++	if (!tz || !tz->hyp)
++		return -ENODEV;
++
++	mutex_lock(&tz->lock);
++	hdr = tzlog_read_header(tz);
++
++	/* log_pos.offset is the write pointer; the oldest byte follows it. */
++	off = hdr->log_pos.offset;
++	if (off >= tz->ring_len)
++		off = 0;
++
++	memcpy(tz->display, tz->snapshot + tz->ring_off + off,
++	       tz->ring_len - off);
++	memcpy(tz->display + tz->ring_len - off,
++	       tz->snapshot + tz->ring_off, off);
++	seq_write(m, tz->display, tz->ring_len);
++
++	mutex_unlock(&tz->lock);
++	return 0;
++}
++
++static int hyp_general_show(struct seq_file *m, void *v)
++{
++	struct qcom_tzlog *tz = m->private;
++	struct hypdbg_header *hdr;
++	int i;
++
++	if (!tz || !tz->hyp)
++		return -ENODEV;
++
++	mutex_lock(&tz->lock);
++	hdr = tzlog_read_header(tz);
++
++	seq_printf(m, "magic           : 0x%08x\n", hdr->magic_num);
++	seq_printf(m, "cpu_count       : %u\n", hdr->cpu_count);
++	seq_printf(m, "ring_off        : 0x%x\n", hdr->ring_off);
++	seq_printf(m, "log_len         : 0x%x\n", hdr->log_len);
++	seq_printf(m, "wrap / offset   : %u / %u\n",
++		   hdr->log_pos.wrap, hdr->log_pos.offset);
++	seq_printf(m, "s2_fault_count  : %u\n", hdr->s2_fault_counter);
++	for (i = 0; i < min_t(u32, hdr->cpu_count, TZDBG_MAX_CPUS); i++)
++		seq_printf(m, "cpu%d: warm enter %u, warm exit %u\n", i,
++			   hdr->boot_info[i].warm_entry_cnt,
++			   hdr->boot_info[i].warm_exit_cnt);
++
++	mutex_unlock(&tz->lock);
++	return 0;
++}
++
++static int tzlog_single_open(struct inode *inode, struct file *file,
++			     int (*show)(struct seq_file *, void *))
++{
++	return single_open(file, show, pde_data(inode));
++}
++
++static int hyp_log_open(struct inode *inode, struct file *file)
++{
++	return tzlog_single_open(inode, file, hyp_log_show);
++}
++
++static int hyp_general_open(struct inode *inode, struct file *file)
++{
++	return tzlog_single_open(inode, file, hyp_general_show);
++}
++
++static const struct proc_ops hyp_log_proc_ops = {
++	.proc_open	= hyp_log_open,
++	.proc_read	= seq_read,
++	.proc_lseek	= seq_lseek,
++	.proc_release	= single_release,
++};
++
++static const struct proc_ops hyp_general_proc_ops = {
++	.proc_open	= hyp_general_open,
++	.proc_read	= seq_read,
++	.proc_lseek	= seq_lseek,
++	.proc_release	= single_release,
++};
++
++static int tz_log_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct qcom_tzlog *tz;
++	struct resource *res;
++	struct hypdbg_header *hdr;
++	u32 addr_offset, size_offset;
++	phys_addr_t hyp_phys;
++	u32 hyp_size;
++	int ret;
++
++	if (tzlog)
++		return -EBUSY;
++
++	tz = devm_kzalloc(dev, sizeof(*tz), GFP_KERNEL);
++	if (!tz)
++		return -ENOMEM;
++
++	tz->dev = dev;
++	mutex_init(&tz->lock);
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res)
++		return -ENXIO;
++
++	tz->imem = devm_ioremap(dev, res->start, resource_size(res));
++	if (!tz->imem)
++		return -ENXIO;
++
++	ret = of_property_read_u32(dev->of_node, "hyplog-address-offset",
++				   &addr_offset);
++	if (ret)
++		return dev_err_probe(dev, ret, "missing hyplog address offset\n");
++
++	ret = of_property_read_u32(dev->of_node, "hyplog-size-offset",
++				   &size_offset);
++	if (ret)
++		return dev_err_probe(dev, ret, "missing hyplog size offset\n");
++
++	hyp_phys = readl_relaxed(tz->imem + addr_offset);
++	hyp_size = readl_relaxed(tz->imem + size_offset);
++	if (!hyp_phys || hyp_size < sizeof(struct hypdbg_header) ||
++	    hyp_size > HYP_LOG_MAX_SIZE)
++		return dev_err_probe(dev, -EINVAL,
++				     "invalid HYP log region %pa size %u\n",
++				     &hyp_phys, hyp_size);
++
++	tz->hyp_size = hyp_size;
++	tz->hyp = devm_ioremap(dev, hyp_phys, hyp_size);
++	if (!tz->hyp)
++		return -ENXIO;
++
++	tz->snapshot = devm_kzalloc(dev, hyp_size, GFP_KERNEL);
++	if (!tz->snapshot)
++		return -ENOMEM;
++
++	hdr = tzlog_read_header(tz);
++	if (hdr->ring_off >= hyp_size) {
++		dev_err(dev, "invalid HYP ring offset 0x%x (size %u)\n",
++			hdr->ring_off, hyp_size);
++		return -EINVAL;
++	}
++	tz->ring_off = hdr->ring_off;
++	tz->ring_len = hyp_size - hdr->ring_off;
++
++	tz->display = devm_kzalloc(dev, tz->ring_len, GFP_KERNEL);
++	if (!tz->display)
++		return -ENOMEM;
++
++	tz->dir = proc_mkdir("tzdbg", NULL);
++	if (!tz->dir)
++		return -ENOMEM;
++
++	if (!proc_create_data("hyp_log", 0444, tz->dir,
++			      &hyp_log_proc_ops, tz)) {
++		ret = -ENOMEM;
++		goto err_remove_dir;
++	}
++	if (!proc_create_data("hyp_general", 0444, tz->dir,
++			      &hyp_general_proc_ops, tz)) {
++		ret = -ENOMEM;
++		goto err_remove_hyp_log;
++	}
++
++	tzlog = tz;
++	dev_info(dev, "HYP log at %pa size %u, ring %zu\n",
++		 &hyp_phys, hyp_size, tz->ring_len);
++	return 0;
++
++err_remove_hyp_log:
++	remove_proc_entry("hyp_log", tz->dir);
++err_remove_dir:
++	remove_proc_entry("tzdbg", NULL);
++	return ret;
++}
++
++static void tz_log_remove(struct platform_device *pdev)
++{
++	if (!tzlog)
++		return;
++
++	remove_proc_entry("hyp_general", tzlog->dir);
++	remove_proc_entry("hyp_log", tzlog->dir);
++	remove_proc_entry("tzdbg", NULL);
++	tzlog = NULL;
++}
++
++static const struct of_device_id tzlog_match[] = {
++	{ .compatible = "qcom,tz-log" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, tzlog_match);
++
++static struct platform_driver tz_log_driver = {
++	.probe		= tz_log_probe,
++	.remove		= tz_log_remove,
++	.driver		= {
++		.name		= "qcom-tz-log",
++		.of_match_table	= tzlog_match,
++	},
++};
++module_platform_driver(tz_log_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Qualcomm TZ/HYP diagnostic log reader");
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+index 2b524154d9fb..5a67815ac531 100644
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -15,6 +15,15 @@ menuconfig QCOM_SOC
+ 
+ if QCOM_SOC
+ 
++config QCOM_BOOTLOADER_LOG
++	tristate "Qualcomm bootloader log buffer reader"
++	depends on OF
++	help
++	  Maps the bootloader (ABL)-reserved log buffer and exposes it via
++	  /proc/bootloader_log. Ported from the oplus vendor tree; requires a
++	  DT node with compatible = "bootloader_log" and a
++	  linux,contiguous-region reference to the reserved memory region.
++
+ config QCOM_AOSS_QMP
+ 	tristate "Qualcomm AOSS Driver"
+ 	depends on MAILBOX
+diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
+index 798643be3590..2414ec443623 100644
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ CFLAGS_rpmh-rsc.o := -I$(src)
+ CFLAGS_qcom_aoss.o := -I$(src)
++obj-$(CONFIG_QCOM_BOOTLOADER_LOG) += bootloader_log.o
+ obj-$(CONFIG_QCOM_AOSS_QMP) +=	qcom_aoss.o
+ obj-$(CONFIG_QCOM_GENI_SE) +=	qcom-geni-se.o
+ obj-$(CONFIG_QCOM_COMMAND_DB) += cmd-db.o
+diff --git a/drivers/soc/qcom/bootloader_log.c b/drivers/soc/qcom/bootloader_log.c
+new file mode 100644
+index 000000000000..1c4d86fdb2ab
+--- /dev/null
++++ b/drivers/soc/qcom/bootloader_log.c
+@@ -0,0 +1,137 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Bootloader log reader for Qualcomm devices with oplus ABL.
++ *
++ * Maps the ABL-reserved log buffer and exposes it as /proc/bootloader_log.
++ * Ported from oplus vendor tree (vendor/oplus/kernel/boot/misc/bootloader_log.c).
++ *
++ * Copyright (C) 2018-2020 Oplus. All rights reserved.
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 only as
++ * published by the Free Software Foundation.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/io.h>
++#include <linux/ioport.h>
++#include <linux/of_address.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++
++struct bootloader_log_ram_zone {
++	phys_addr_t paddr;
++	size_t size;
++	void *vaddr;
++};
++
++static struct bootloader_log_ram_zone blrz;
++static struct proc_dir_entry *bootloader_log_proc_entry;
++
++static int bootloader_log_proc_show(struct seq_file *m, void *v)
++{
++	if (!blrz.vaddr)
++		return -ENODEV;
++
++	seq_puts(m, blrz.vaddr);
++	seq_putc(m, '\n');
++	return 0;
++}
++
++static int bootloader_log_proc_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, bootloader_log_proc_show, NULL);
++}
++
++static const struct proc_ops bootloader_log_proc_fops = {
++	.proc_open	= bootloader_log_proc_open,
++	.proc_read	= seq_read,
++	.proc_lseek	= seq_lseek,
++	.proc_release	= single_release,
++};
++
++static int bootloader_log_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node;
++	struct device_node *pnode;
++	struct resource res;
++	int ret;
++
++	pnode = of_parse_phandle(np, "linux,contiguous-region", 0);
++	if (!pnode) {
++		dev_err(dev, "mem reservation for bootloader log not present\n");
++		return -EINVAL;
++	}
++
++	ret = of_address_to_resource(pnode, 0, &res);
++	of_node_put(pnode);
++	if (ret) {
++		dev_err(dev, "failed to parse the bootloader log memory region\n");
++		return ret;
++	}
++
++	blrz.paddr = res.start;
++	blrz.size = resource_size(&res);
++
++	/*
++	 * The reserved-memory node is marked no-map, so map it here.
++	 * Use write-combine so the buffer stays cacheable-ish but is
++	 * safe to read without explicit cache maintenance.
++	 */
++	blrz.vaddr = memremap(blrz.paddr, blrz.size, MEMREMAP_WC);
++	if (!blrz.vaddr) {
++		dev_err(dev, "failed to map 0x%pa (%zu bytes)\n",
++			&blrz.paddr, blrz.size);
++		return -ENOMEM;
++	}
++
++	/* NUL-terminate in case the log fills the buffer completely. */
++	((char *)blrz.vaddr)[blrz.size - 1] = '\0';
++
++	bootloader_log_proc_entry =
++		proc_create("bootloader_log", 0444, NULL,
++			    &bootloader_log_proc_fops);
++	if (!bootloader_log_proc_entry) {
++		dev_err(dev, "failed to create /proc/bootloader_log\n");
++		memunmap(blrz.vaddr);
++		blrz.vaddr = NULL;
++		return -ENOMEM;
++	}
++
++	dev_info(dev, "mapped 0x%pa (%zu bytes) -> /proc/bootloader_log\n",
++		 &blrz.paddr, blrz.size);
++	return 0;
++}
++
++static void bootloader_log_remove(struct platform_device *pdev)
++{
++	proc_remove(bootloader_log_proc_entry);
++	bootloader_log_proc_entry = NULL;
++	memunmap(blrz.vaddr);
++	blrz.vaddr = NULL;
++}
++
++static const struct of_device_id bootloader_log_of_match[] = {
++	{ .compatible = "oplus,bootloader-log" },
++	{ .compatible = "bootloader_log" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, bootloader_log_of_match);
++
++static struct platform_driver bootloader_log_driver = {
++	.probe	= bootloader_log_probe,
++	.remove	= bootloader_log_remove,
++	.driver	= {
++		.name	= "bootloader_log",
++		.of_match_table = bootloader_log_of_match,
++	},
++};
++
++module_platform_driver(bootloader_log_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Qualcomm oplus ABL bootloader log reader (/proc/bootloader_log)");
++MODULE_AUTHOR("software@oneplus.cn");

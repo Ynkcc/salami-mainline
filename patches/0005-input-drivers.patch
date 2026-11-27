@@ -1,21 +1,22 @@
-From d77ef03044895087713a5a8d12ce1bba6e63ed65 Mon Sep 17 00:00:00 2001
-From: ynk <evils.ynk@gmail.com>
-Date: Tue, 29 Sep 2026 19:26:11 +0800
-Subject: [PATCH 05/11] Input: Add Synaptics TouchComm I2C touchscreen driver
+input: Add salami touchscreen and hall sensor drivers
 
-Link: https://lwn.net/ml/all/20260910070723.347768-3-sevanevorotov29@gmail.com/
+From: ynk <evils.ynk@gmail.com>
+
+Add the Synaptics TouchComm I2C touchscreen driver and IST8801 hall sensor driver, with their bindings and MAINTAINERS entries.
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- .../input/touchscreen/syna,s3908.yaml         |   69 ++
- MAINTAINERS                                   |    7 +
- .../boot/dts/qcom/sm8550-oneplus-salami.dts   |   46 +-
- arch/arm64/configs/salami_defconfig           |    1 +
- drivers/input/touchscreen/Kconfig             |   15 +
- drivers/input/touchscreen/Makefile            |    1 +
- drivers/input/touchscreen/synaptics_tcm_i2c.c | 1066 +++++++++++++++++
- 7 files changed, 1202 insertions(+), 3 deletions(-)
+ .../bindings/input/touchscreen/syna,s3908.yaml     |   69 +
+ MAINTAINERS                                        |    7 
+ drivers/input/misc/Kconfig                         |   12 
+ drivers/input/misc/Makefile                        |    1 
+ drivers/input/misc/ist8801-hall.c                  |  395 +++++++
+ drivers/input/touchscreen/Kconfig                  |   15 
+ drivers/input/touchscreen/Makefile                 |    1 
+ drivers/input/touchscreen/synaptics_tcm_i2c.c      | 1066 ++++++++++++++++++++
+ 8 files changed, 1566 insertions(+)
  create mode 100644 Documentation/devicetree/bindings/input/touchscreen/syna,s3908.yaml
+ create mode 100644 drivers/input/misc/ist8801-hall.c
  create mode 100644 drivers/input/touchscreen/synaptics_tcm_i2c.c
 
 diff --git a/Documentation/devicetree/bindings/input/touchscreen/syna,s3908.yaml b/Documentation/devicetree/bindings/input/touchscreen/syna,s3908.yaml
@@ -111,105 +112,437 @@ index 782389bd5cd3..d3200bd345fc 100644
  SYNC FILE FRAMEWORK
  M:	Sumit Semwal <sumit.semwal@linaro.org>
  L:	linux-media@vger.kernel.org
-diff --git a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-index 9857acd46712..64aff3f170c7 100644
---- a/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-+++ b/arch/arm64/boot/dts/qcom/sm8550-oneplus-salami.dts
-@@ -1,4 +1,5 @@
- /dts-v1/;
-+#include <dt-bindings/clock/qcom,rpmh.h>
- #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
- #include "sm8550.dtsi"
- #include "pm8550.dtsi"
-@@ -126,6 +127,17 @@ vph_pwr: vph-pwr-regulator {
-     regulator-name = "vph_pwr";
- };
+diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
+index 169768e3d5bb..958d9a176d00 100644
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -1023,4 +1023,16 @@ config INPUT_STPMIC1_ONKEY
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called stpmic1_onkey.
  
-+vreg_tp_2v8: tp-2v8-regulator {
-+    compatible = "regulator-fixed";
-+    enable-active-high;
-+    gpio = <&tlmm 10 GPIO_ACTIVE_HIGH>;
-+    pinctrl-0 = <&ts_2v8_en_default>;
-+    pinctrl-names = "default";
-+    regulator-max-microvolt = <3008000>;
-+    regulator-min-microvolt = <3008000>;
-+    regulator-name = "vreg_tp_2v8";
++config INPUT_IST8801_HALL
++	tristate "IST8801 hall sensor alert slider support"
++	depends on I2C
++	help
++	  Say Y here to enable support for the pair of IST8801 hall sensors
++	  that make up the tri-state alert slider on OnePlus handsets such
++	  as the OnePlus 11 (salami).  The slider position is reported as
++	  EV_ABS/ABS_SND_PROFILE.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called ist8801-hall.
++
+ endif
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+index 1339619f0769..81e39ce040cb 100644
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -97,3 +97,4 @@ obj-$(CONFIG_INPUT_WM831X_ON)		+= wm831x-on.o
+ obj-$(CONFIG_INPUT_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
+ obj-$(CONFIG_INPUT_YEALINK)		+= yealink.o
+ obj-$(CONFIG_INPUT_IDEAPAD_SLIDEBAR)	+= ideapad_slidebar.o
++obj-$(CONFIG_INPUT_IST8801_HALL)	+= ist8801-hall.o
+diff --git a/drivers/input/misc/ist8801-hall.c b/drivers/input/misc/ist8801-hall.c
+new file mode 100644
+index 000000000000..8771f9c2255f
+--- /dev/null
++++ b/drivers/input/misc/ist8801-hall.c
+@@ -0,0 +1,395 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Driver for the pair of IST8801 hall sensors used by the alert slider
++ * (tri-state key) on OnePlus handsets such as the OnePlus 11 (salami).
++ *
++ * The slider magnetizes one of the two hall switches (up or down) while
++ * the middle position leaves both mostly unmagnetized.  Both ICs are
++ * continuously measured over I2C and the slider position is reported to
++ * userspace through EV_ABS/ABS_SND_PROFILE, matching the interface used
++ * by the gpio-keys based alert sliders of older OnePlus devices.
++ *
++ * Position heuristic mirrors the downstream oplus tri-state key driver:
++ * delta = up_data - down_data (sign-normalized); large positive delta is
++ * the up position, large negative the down position, otherwise middle.
++ */
++
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/input.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++#include <uapi/linux/input-event-codes.h>
++
++/* Register map */
++#define IST8801_REG_PERSINT		0x00
++#define IST8801_PERSINT_COUNT(n)	((n) << 4)
++#define IST8801_REG_INTSRS		0x01
++#define IST8801_REG_SRST		0x07
++#define IST8801_SRST_RESET		0x01
++#define IST8801_REG_OPF			0x08
++#define IST8801_OPF_FREQ_10HZ		0x10
++#define IST8801_REG_DID			0x09
++#define IST8801_DID			0x81
++#define IST8801_REG_CNTL2		0x0d
++#define IST8801_REG_ST1			0x10
++#define IST8801_ST1_DRDY		0x01
++#define IST8801_REG_HSL			0x11
++#define IST8801_REG_HSH			0x12
++#define IST8801_REG_ACTION		0x20
++#define IST8801_REG_IFCNTL		0x40
++#define IST8801_REG_GAINCNTL		0x54
++
++/* Position of the two hall ICs relative to the slider */
++enum ist8801_role {
++	IST8801_UP,
++	IST8801_DOWN,
++	IST8801_NUM_ROLES,
 +};
 +
- wcn7850-pmu {
-     bt-enable-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
-     compatible = "qcom,wcn7850-pmu";
-@@ -724,13 +736,16 @@ &i2c4 {
-     status = "okay";
- 
-     touchscreen@4b {
--        compatible = "synaptics-s3908";
--        enable2v8-gpios = <&tlmm 10 GPIO_ACTIVE_HIGH>;
-+        compatible = "syna,s3908";
-         interrupt-parent = <&tlmm>;
-         interrupts = <25 IRQ_TYPE_LEVEL_LOW>;
-+        pinctrl-0 = <&ts_int_default>, <&ts_reset_default>;
-+        pinctrl-names = "default";
-         reg = <0x4b>;
-         reset-gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
--        vcc-supply = <&vreg_l4b_1p8>;
-+        vdd-supply = <&vreg_l4b_1p8>;
-+        avdd-supply = <&vreg_tp_2v8>;
-+        wakeup-source;
-     };
- };
- 
-@@ -769,6 +784,28 @@ sde_te: sde-te-state {
-         function = "mdp_vsync";
-         pins = "gpio86";
-     };
++#define IST8801_POSITION_DELTA		30
++#define IST8801_POLL_INTERVAL_MS	200
 +
-+    ts_2v8_en_default: ts-2v8-en-default-state {
-+        bias-disable;
-+        drive-strength = <2>;
-+        function = "gpio";
-+        pins = "gpio10";
-+    };
++struct ist8801_chip {
++	struct i2c_client *client;
++	struct regulator *vdd;
++	struct regulator *vio;
++	enum ist8801_role role;
++	bool ready;
++};
 +
-+    ts_int_default: ts-int-default-state {
-+        bias-pull-up;
-+        drive-strength = <8>;
-+        function = "gpio";
-+        input-enable;
-+        pins = "gpio25";
-+    };
++struct ist8801_hall {
++	struct mutex lock;
++	struct input_dev *input;
++	struct ist8801_chip *chips[IST8801_NUM_ROLES];
++	int position;
++};
 +
-+    ts_reset_default: ts-reset-default-state {
-+        bias-disable;
-+        drive-strength = <8>;
-+        function = "gpio";
-+        pins = "gpio24";
-+    };
- };
- 
- &mdss {
-@@ -792,6 +829,9 @@ panel@0 {
-         reset-gpios = <&tlmm 133 GPIO_ACTIVE_LOW>;
-         vci-supply = <&vreg_l13b_3p2>;
-         vddio-supply = <&vreg_l12b_1p8>;
-+        clocks = <&rpmhcc RPMH_DIV_CLK1>;
-+        clock-names = "div_clk";
-+        vout-gpios = <&tlmm 90 GPIO_ACTIVE_HIGH>;
- 
-         port {
-             panel0_in: endpoint {
-diff --git a/arch/arm64/configs/salami_defconfig b/arch/arm64/configs/salami_defconfig
-index 11e56fd8903c..0ca8d83a900f 100644
---- a/arch/arm64/configs/salami_defconfig
-+++ b/arch/arm64/configs/salami_defconfig
-@@ -960,6 +960,7 @@ CONFIG_HID_BATTERY_STRENGTH=y
- CONFIG_KEYBOARD_GPIO=y
- CONFIG_KEYBOARD_CROS_EC=y
- CONFIG_INPUT_TOUCHSCREEN=y
-+CONFIG_TOUCHSCREEN_SYNAPTICS_TCM_I2C=y
- CONFIG_INPUT_MISC=y
- CONFIG_INPUT_PM8941_PWRKEY=y
- CONFIG_INPUT_HISI_POWERKEY=y
++/*
++ * The slider consists of two separate I2C devices that jointly form one
++ * input device; keep a system-wide singleton (there is exactly one alert
++ * slider per device).
++ */
++static struct ist8801_hall ist8801_hall = {
++	.lock = __MUTEX_INITIALIZER(ist8801_hall.lock),
++	.position = -1,
++};
++
++static int ist8801_read_reg(struct ist8801_chip *chip, u8 reg, u8 *val)
++{
++	struct i2c_client *client = chip->client;
++	struct i2c_msg msgs[2] = {
++		{ .addr = client->addr, .flags = 0,
++		  .len = 1, .buf = &reg },
++		{ .addr = client->addr, .flags = I2C_M_RD,
++		  .len = 1, .buf = val },
++	};
++	int ret;
++
++	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
++	if (ret != ARRAY_SIZE(msgs)) {
++		dev_err(&client->dev, "read reg 0x%02x failed: %d\n", reg, ret);
++		return ret < 0 ? ret : -EIO;
++	}
++
++	return 0;
++}
++
++static int ist8801_write_reg(struct ist8801_chip *chip, u8 reg, u8 val)
++{
++	struct i2c_client *client = chip->client;
++	u8 buf[2] = { reg, val };
++	int ret;
++
++	ret = i2c_master_send(client, buf, sizeof(buf));
++	if (ret != sizeof(buf)) {
++		dev_err(&client->dev, "write reg 0x%02x failed: %d\n", reg, ret);
++		return ret < 0 ? ret : -EIO;
++	}
++
++	return 0;
++}
++
++static int ist8801_read_data(struct ist8801_chip *chip, s16 *value)
++{
++	struct i2c_client *client = chip->client;
++	struct i2c_msg msgs[2] = {
++		{ .addr = client->addr, .flags = 0,
++		  .len = 1, .buf = (u8[]){ IST8801_REG_ST1 } },
++		{ .addr = client->addr, .flags = I2C_M_RD,
++		  .len = 3, .buf = (u8[3]){ } },
++	};
++	u8 *buf = msgs[1].buf;
++	int ret;
++
++	ret = i2c_transfer(client->adapter, msgs, ARRAY_SIZE(msgs));
++	if (ret != ARRAY_SIZE(msgs)) {
++		dev_err(&client->dev, "read measurement failed: %d\n", ret);
++		return ret < 0 ? ret : -EIO;
++	}
++
++	if (!(buf[0] & IST8801_ST1_DRDY))
++		return -EAGAIN;
++
++	*value = (s16)((buf[2] << 8) | buf[1]);
++
++	return 0;
++}
++
++static int ist8801_init_chip(struct ist8801_chip *chip)
++{
++	struct i2c_client *client = chip->client;
++	u8 val;
++	int ret;
++
++	/* soft reset, then verify the device id */
++	ret = ist8801_write_reg(chip, IST8801_REG_SRST, IST8801_SRST_RESET);
++	if (ret)
++		return ret;
++	msleep(20);
++
++	ret = ist8801_read_reg(chip, IST8801_REG_DID, &val);
++	if (ret)
++		return ret;
++	if (val != IST8801_DID) {
++		dev_err(&client->dev,
++			"unexpected device id 0x%02x (expected 0x%02x)\n",
++			val, IST8801_DID);
++		return -ENODEV;
++	}
++
++	/* 10-bit ADC resolution, default gain */
++	ret = ist8801_write_reg(chip, IST8801_REG_CNTL2, 0x0c);
++	if (ret)
++		return ret;
++
++	/* keep the factory gain setting */
++	ret = ist8801_read_reg(chip, IST8801_REG_GAINCNTL, &val);
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_GAINCNTL, val);
++	if (ret)
++		return ret;
++
++	/* interrupt persistence, but keep the INT pin unused (polling) */
++	ret = ist8801_write_reg(chip, IST8801_REG_PERSINT,
++				IST8801_PERSINT_COUNT(2));
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_INTSRS, 0x00);
++	if (ret)
++		return ret;
++
++	/* enter continuous measurement mode at 10 Hz */
++	ret = ist8801_write_reg(chip, IST8801_REG_ACTION, 0x00);
++	if (ret)
++		return ret;
++	usleep_range(5000, 5100);
++	ret = ist8801_write_reg(chip, IST8801_REG_OPF, 0x00);
++	if (ret)
++		return ret;
++	ret = ist8801_read_reg(chip, IST8801_REG_IFCNTL, &val);
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_IFCNTL, val | 0x04);
++	if (ret)
++		return ret;
++	ret = ist8801_write_reg(chip, IST8801_REG_OPF, IST8801_OPF_FREQ_10HZ);
++	if (ret)
++		return ret;
++
++	chip->ready = true;
++	dev_info(&client->dev, "hall sensor ready (%s)\n",
++		 chip->role == IST8801_UP ? "up" : "down");
++
++	return 0;
++}
++
++static void ist8801_poll(struct input_dev *input)
++{
++	struct ist8801_hall *hall = &ist8801_hall;
++	struct ist8801_chip *up = hall->chips[IST8801_UP];
++	struct ist8801_chip *down = hall->chips[IST8801_DOWN];
++	s16 up_val, down_val;
++	int delta, position;
++
++	scoped_guard(mutex, &hall->lock) {
++		if (!up || !down || !up->ready || !down->ready)
++			return;
++
++		if (ist8801_read_data(up, &up_val) ||
++		    ist8801_read_data(down, &down_val))
++			return;
++
++		/*
++		 * Downstream tri-state key heuristic: normalize the sign of
++		 * both readings, then classify by their difference.
++		 */
++		if (up_val < 0 || down_val < 0)
++			delta = -up_val - -down_val;
++		else
++			delta = up_val - down_val;
++
++		if (delta > IST8801_POSITION_DELTA)
++			position = SND_PROFILE_RING;	/* slider up */
++		else if (delta < -IST8801_POSITION_DELTA)
++			position = SND_PROFILE_SILENT;	/* slider down */
++		else
++			position = SND_PROFILE_VIBRATE;	/* middle */
++
++		if (position != hall->position) {
++			hall->position = position;
++			input_report_abs(input, ABS_SND_PROFILE, position);
++			input_sync(input);
++		}
++	}
++}
++
++static int ist8801_try_register_input(struct ist8801_hall *hall,
++				      struct device *dev)
++{
++	struct input_dev *input;
++	int ret;
++
++	if (hall->input)
++		return 0;
++	if (!hall->chips[IST8801_UP] || !hall->chips[IST8801_DOWN])
++		return 0;
++
++	input = input_allocate_device();
++	if (!input)
++		return -ENOMEM;
++
++	input->name = "Alert slider";
++	input->id.bustype = BUS_I2C;
++	input_set_capability(input, EV_ABS, ABS_SND_PROFILE);
++	input_set_abs_params(input, ABS_SND_PROFILE,
++			     SND_PROFILE_SILENT, SND_PROFILE_RING, 0, 0);
++	input_setup_polling(input, ist8801_poll);
++	input_set_poll_interval(input, IST8801_POLL_INTERVAL_MS);
++
++	ret = input_register_device(input);
++	if (ret) {
++		input_free_device(input);
++		return ret;
++	}
++
++	hall->input = input;
++	dev_info(dev, "alert slider input device registered\n");
++
++	return 0;
++}
++
++static void ist8801_unregister_input(struct ist8801_hall *hall)
++{
++	if (hall->input) {
++		input_unregister_device(hall->input);
++		hall->input = NULL;
++	}
++	hall->position = -1;
++}
++
++static int ist8801_probe(struct i2c_client *client)
++{
++	struct ist8801_hall *hall = &ist8801_hall;
++	struct ist8801_chip *chip;
++	enum ist8801_role role;
++	int ret;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
++		return -EOPNOTSUPP;
++
++	if (of_device_is_compatible(client->dev.of_node,
++				    "oplus,hall-ist8801,up"))
++		role = IST8801_UP;
++	else if (of_device_is_compatible(client->dev.of_node,
++					 "oplus,hall-ist8801,down"))
++		role = IST8801_DOWN;
++	else
++		return -EINVAL;
++
++	chip = devm_kzalloc(&client->dev, sizeof(*chip), GFP_KERNEL);
++	if (!chip)
++		return -ENOMEM;
++
++	chip->client = client;
++	chip->role = role;
++
++	chip->vdd = devm_regulator_get(&client->dev, "vdd");
++	if (IS_ERR(chip->vdd))
++		return PTR_ERR(chip->vdd);
++
++	chip->vio = devm_regulator_get(&client->dev, "vio");
++	if (IS_ERR(chip->vio))
++		return PTR_ERR(chip->vio);
++
++	ret = regulator_enable(chip->vdd);
++	if (ret)
++		return ret;
++	msleep(20);
++	ret = regulator_enable(chip->vio);
++	if (ret)
++		goto err_disable_vdd;
++
++	ret = ist8801_init_chip(chip);
++	if (ret)
++		goto err_disable_vio;
++
++	i2c_set_clientdata(client, chip);
++
++	ret = 0;
++	mutex_lock(&hall->lock);
++	hall->chips[role] = chip;
++	ret = ist8801_try_register_input(hall, &client->dev);
++	if (ret)
++		hall->chips[role] = NULL;
++	mutex_unlock(&hall->lock);
++
++	return ret;
++
++err_disable_vio:
++	regulator_disable(chip->vio);
++err_disable_vdd:
++	regulator_disable(chip->vdd);
++	return ret;
++}
++
++static void ist8801_remove(struct i2c_client *client)
++{
++	struct ist8801_hall *hall = &ist8801_hall;
++	struct ist8801_chip *chip = i2c_get_clientdata(client);
++
++	guard(mutex)(&hall->lock);
++	hall->chips[chip->role] = NULL;
++	if (!hall->chips[IST8801_UP] && !hall->chips[IST8801_DOWN])
++		ist8801_unregister_input(hall);
++}
++
++static const struct i2c_device_id ist8801_id[] = {
++	{ "ist8801-hall" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, ist8801_id);
++
++static const struct of_device_id ist8801_of_match[] = {
++	{ .compatible = "oplus,hall-ist8801,up" },
++	{ .compatible = "oplus,hall-ist8801,down" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ist8801_of_match);
++
++static struct i2c_driver ist8801_driver = {
++	.driver = {
++		.name		= "ist8801-hall",
++		.of_match_table	= ist8801_of_match,
++	},
++	.probe		= ist8801_probe,
++	.remove		= ist8801_remove,
++	.id_table	= ist8801_id,
++};
++module_i2c_driver(ist8801_driver);
++
++MODULE_DESCRIPTION("IST8801 hall sensor support for OnePlus alert sliders");
++MODULE_LICENSE("GPL");
 diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
 index 9b9ae8ac3f7f..c58e3e4cc1cc 100644
 --- a/drivers/input/touchscreen/Kconfig
@@ -1320,6 +1653,3 @@ index 000000000000..406db582f2c0
 +MODULE_DESCRIPTION("Synaptics TouchComm I2C touchscreen driver");
 +MODULE_AUTHOR("Vsevolod Nevorotov <sevanevorotov29@gmail.com>");
 +MODULE_LICENSE("GPL");
--- 
-2.56.0
-
