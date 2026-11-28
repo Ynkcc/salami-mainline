@@ -2,36 +2,99 @@ salami: enable cellular data path
 
 From: ynk <evils.ynk@gmail.com>
 
-Fix the IPA QMI handshake with vendor modem firmware (SMEM item 497, INIT_DRIVER TLVs, INIT_COMPLETE) and map the modem SMEM filter table into the IPA IOMMU domain.
+Fix the IPA QMI handshake with vendor modem firmware:
+
+- Allocate SMEM item 497 (IPA filter table region, 0xb000 on IPA v5.5)
+  from the AP at probe time and map it 1:1 into the IPA IOMMU domain.
+  The modem does not allocate it itself; without it the modem receives
+  a zero per-stats address and asserts when the data path is brought up.
+- Report the exact (unaligned) physical address of the item in
+  per_stats_smem_info, matching vendor ipa3_qmi_init_modem_send_sync_msg().
+- Point hw_filter_stats_info at the IPA SRAM filter/route statistics
+  region (IPA_MEM_STATS_FILTER_ROUTE, 0x2cd0 on IPA v5.5) instead of a
+  hard-coded offset from an older SoC.
+- Send INIT_COMPLETE unconditionally; vendor firmware expects it even
+  without a prior indication registration.
+- Handle the FILTER_INSTALLED_NOTIF (0x24) request the modem sends after
+  installing its filter rules.  The modem asserts with
+  "msg_id == QMI_IPA_FILTER_INSTALLED_NOTIF_RESP_V01 failed" and its
+  initialization stalls (DOG detects stalled initialization) when the
+  AP never responds.
 
 Signed-off-by: ynk <evils.ynk@gmail.com>
 ---
- drivers/net/ipa/ipa_mem.c     |   11 +++++
- drivers/net/ipa/ipa_qmi.c     |   50 ++++++++++++++++++++-
- drivers/net/ipa/ipa_qmi_msg.c |  100 +++++++++++++++++++++++++++++++++++++++++
- drivers/net/ipa/ipa_qmi_msg.h |   22 +++++++++
- 4 files changed, 180 insertions(+), 3 deletions(-)
+ drivers/net/ipa/ipa.h         |    1 
+ drivers/net/ipa/ipa_mem.c     |   27 ++++--
+ drivers/net/ipa/ipa_qmi.c     |   71 ++++++++++++++-
+ drivers/net/ipa/ipa_qmi_msg.c |  200 +++++++++++++++++++++++++++++++++++++++++
+ drivers/net/ipa/ipa_qmi_msg.h |   49 ++++++++++
+ 5 files changed, 337 insertions(+), 11 deletions(-)
 
+diff --git a/drivers/net/ipa/ipa.h b/drivers/net/ipa/ipa.h
+index 7ef10a4ff35e..74ac1d9d3c8b 100644
+--- a/drivers/net/ipa/ipa.h
++++ b/drivers/net/ipa/ipa.h
+@@ -105,6 +105,7 @@ struct ipa {
+ 
+ 	unsigned long smem_iova;
+ 	size_t smem_size;
++	phys_addr_t smem_phys;		/* Address of SMEM item (QMI) */
+ 
+ 	dma_addr_t zero_addr;
+ 	void *zero_virt;
 diff --git a/drivers/net/ipa/ipa_mem.c b/drivers/net/ipa/ipa_mem.c
-index 078d32a18dbf..284fd41e9866 100644
+index 078d32a18dbf..448dfd1189a2 100644
 --- a/drivers/net/ipa/ipa_mem.c
 +++ b/drivers/net/ipa/ipa_mem.c
-@@ -539,6 +539,14 @@ static int ipa_smem_init(struct ipa *ipa, size_t size)
- 	if (!size)
- 		return 0;	/* SMEM memory not used */
+@@ -533,6 +533,7 @@ static int ipa_smem_init(struct ipa *ipa, size_t size)
+ 	phys_addr_t phys;
+ 	phys_addr_t addr;
+ 	size_t actual;
++	size_t mapped;
+ 	void *virt;
+ 	int ret;
  
-+	/* This firmware allocates SMEM item 497 itself.  A host-side
-+	 * pre-allocation makes the modem assert in ipa_ipfltr_sys_mem_init().
-+	 * The mapping isn't used by the host except for QMI information.
-+	 */
-+	ipa->smem_iova = 0;
-+	ipa->smem_size = size;
-+	return 0;
+@@ -562,6 +563,7 @@ static int ipa_smem_init(struct ipa *ipa, size_t size)
+ 		return ret;
+ 	}
+ 
 +
- 	/* SMEM is memory shared between the AP and another system entity
- 	 * (in this case, the modem).  An allocation from SMEM is persistent
- 	 * until the AP reboots; there is no way to free an allocated SMEM
-@@ -597,6 +605,9 @@ static void ipa_smem_exit(struct ipa *ipa)
+ 	/* In case the region was already allocated, verify the size */
+ 	if (ret && actual != size) {
+ 		dev_err(dev, "SMEM item has size %zu, expected %zu\n",
+@@ -569,6 +571,7 @@ static int ipa_smem_init(struct ipa *ipa, size_t size)
+ 		return -EINVAL;
+ 	}
+ 
++
+ 	domain = iommu_get_domain_for_dev(dev);
+ 	if (!domain) {
+ 		dev_err(dev, "no IOMMU domain found for SMEM\n");
+@@ -578,16 +581,21 @@ static int ipa_smem_init(struct ipa *ipa, size_t size)
+ 	/* Align the address down and the size up to a page boundary */
+ 	addr = qcom_smem_virt_to_phys(virt);
+ 	phys = addr & PAGE_MASK;
+-	size = PAGE_ALIGN(size + addr - phys);
++	mapped = PAGE_ALIGN(size + addr - phys);
+ 	iova = phys;	/* We just want a direct mapping */
+ 
+-	ret = iommu_map(domain, iova, phys, size, IOMMU_READ | IOMMU_WRITE,
++	ret = iommu_map(domain, iova, phys, mapped, IOMMU_READ | IOMMU_WRITE,
+ 			GFP_KERNEL);
+ 	if (ret)
+ 		return ret;
+ 
++	/* The modem needs the exact (unaligned) address of the item; it
++	 * places the per-statistics block in its first 2 KiB.  The region
++	 * size reported through QMI must be the item size as well.
++	 */
+ 	ipa->smem_iova = iova;
+ 	ipa->smem_size = size;
++	ipa->smem_phys = addr;
+ 
+ 	return 0;
+ }
+@@ -597,21 +605,28 @@ static void ipa_smem_exit(struct ipa *ipa)
  	struct device *dev = ipa->dev;
  	struct iommu_domain *domain;
  
@@ -40,31 +103,43 @@ index 078d32a18dbf..284fd41e9866 100644
 +
  	domain = iommu_get_domain_for_dev(dev);
  	if (domain) {
++		size_t mapped;
  		size_t size;
+ 
+-		size = iommu_unmap(domain, ipa->smem_iova, ipa->smem_size);
+-		if (size != ipa->smem_size)
++		/* The mapping covers the item and its offset within the page */
++		mapped = PAGE_ALIGN(ipa->smem_size +
++				    (ipa->smem_phys & ~PAGE_MASK));
++		size = iommu_unmap(domain, ipa->smem_iova, mapped);
++		if (size != mapped)
+ 			dev_warn(dev, "unmapped %zu SMEM bytes, expected %zu\n",
+-				 size, ipa->smem_size);
+-
++				 size, mapped);
+ 	} else {
+ 		dev_err(dev, "couldn't get IPA IOMMU domain for SMEM\n");
+ 	}
+ 
+ 	ipa->smem_size = 0;
+ 	ipa->smem_iova = 0;
++	ipa->smem_phys = 0;
+ }
+ 
+ /* Perform memory region-related initialization */
 diff --git a/drivers/net/ipa/ipa_qmi.c b/drivers/net/ipa/ipa_qmi.c
-index d771f3a71f94..9001e773489c 100644
+index d771f3a71f94..1612bb8c517b 100644
 --- a/drivers/net/ipa/ipa_qmi.c
 +++ b/drivers/net/ipa/ipa_qmi.c
-@@ -7,6 +7,8 @@
- #include <linux/qrtr.h>
- #include <linux/string.h>
- #include <linux/types.h>
-+#include <linux/iommu.h>
-+#include <linux/soc/qcom/smem.h>
- 
- #include "ipa.h"
- #include "ipa_mem.h"
-@@ -72,6 +74,9 @@
+@@ -72,6 +72,7 @@
  
  #define IPA_MODEM_SERVICE_SVC_ID	0x31
  #define IPA_MODEM_SERVICE_INS_ID	2
 +
-+#define IPA_QMI_SMEM_HOST_MODEM	1
-+#define IPA_QMI_SMEM_FILTER_TABLE	497
  #define IPA_MODEM_SVC_VERS		1
  
  #define QMI_INIT_DRIVER_TIMEOUT		60000	/* A minute in milliseconds */
-@@ -128,8 +133,8 @@ static void ipa_qmi_ready(struct ipa_qmi *ipa_qmi)
+@@ -128,8 +129,8 @@ static void ipa_qmi_ready(struct ipa_qmi *ipa_qmi)
  	if (!ipa_qmi->modem_ready || !ipa_qmi->uc_ready)
  		return;
  
@@ -75,59 +150,205 @@ index d771f3a71f94..9001e773489c 100644
  
  	/* The initial boot requires us to send the indication. */
  	if (ipa_qmi->initial_boot) {
-@@ -372,6 +377,47 @@ init_modem_driver_req(struct ipa_qmi *ipa_qmi)
+@@ -229,7 +230,39 @@ static void ipa_server_driver_init_complete(struct qmi_handle *qmi,
+ 	}
+ }
+ 
+-/* The server handles two request message types sent by the modem. */
++/* Respond to a FILTER_INSTALLED_NOTIF request message from the modem.
++ * The modem sends this after installing its filter rules, and asserts
++ * (or stalls) if it does not receive a response.
++ */
++static void ipa_server_filter_installed_notif(struct qmi_handle *qmi,
++					      struct sockaddr_qrtr *sq,
++					      struct qmi_txn *txn,
++					      const void *decoded)
++{
++	const struct ipa_fltr_installed_notif_req *req = decoded;
++	struct ipa_driver_init_complete_rsp rsp = { };
++	struct ipa_qmi *ipa_qmi;
++	struct ipa *ipa;
++	int ret;
++
++	ipa_qmi = container_of(qmi, struct ipa_qmi, server_handle);
++	ipa = container_of(ipa_qmi, struct ipa, qmi);
++
++	ret = qmi_send_response(qmi, sq, txn, IPA_QMI_FILTER_INSTALLED_NOTIF,
++				IPA_QMI_FILTER_INSTALLED_NOTIF_RSP_SZ,
++				ipa_fltr_installed_notif_rsp_ei, &rsp);
++	if (ret)
++		dev_err(ipa->dev,
++			"error %d sending filter installed notif response\n",
++			ret);
++	else
++		dev_info(ipa->dev,
++			 "filter installed notif: pipe %u status %u count %u\n",
++			 req->source_pipe_index, req->install_status,
++			 req->filter_index_count);
++}
++
++/* The server handles three request message types sent by the modem. */
+ static const struct qmi_msg_handler ipa_server_msg_handlers[] = {
+ 	{
+ 		.type		= QMI_REQUEST,
+@@ -238,6 +271,13 @@ static const struct qmi_msg_handler ipa_server_msg_handlers[] = {
+ 		.decoded_size	= IPA_QMI_INDICATION_REGISTER_REQ_SZ,
+ 		.fn		= ipa_server_indication_register,
+ 	},
++	{
++		.type		= QMI_REQUEST,
++		.msg_id		= IPA_QMI_FILTER_INSTALLED_NOTIF,
++		.ei		= ipa_fltr_installed_notif_req_ei,
++		.decoded_size	= sizeof(struct ipa_fltr_installed_notif_req),
++		.fn		= ipa_server_filter_installed_notif,
++	},
+ 	{
+ 		.type		= QMI_REQUEST,
+ 		.msg_id		= IPA_QMI_DRIVER_INIT_COMPLETE,
+@@ -372,6 +412,31 @@ init_modem_driver_req(struct ipa_qmi *ipa_qmi)
  		req.v6_hash_filter_tbl_start = ipa->mem_offset + mem->offset;
  	}
  
-+	/* The modem allocates SMEM item 497; look it up and map it into the
-+	 * IPA IOMMU domain so per_stats_smem_info carries a valid address.
++	/* The modem's filter table system uses a SMEM item (497) which the
++	 * AP allocates at probe time (see ipa_smem_init()).  It is mapped
++	 * into the IPA IOMMU domain so the IPA can access it.  The modem
++	 * is told the item's exact address and size.
 +	 */
-+	{
-+		void *virt;
-+		size_t actual;
-+		struct iommu_domain *domain;
-+
-+		virt = qcom_smem_get(IPA_QMI_SMEM_HOST_MODEM,
-+				     IPA_QMI_SMEM_FILTER_TABLE, &actual);
-+		if (!IS_ERR(virt)) {
-+			phys_addr_t phys = qcom_smem_virt_to_phys(virt);
-+			domain = iommu_get_domain_for_dev(ipa->dev);
-+			if (domain && !ipa->smem_iova)
-+				if (!iommu_map(domain, phys, phys,
-+					       PAGE_ALIGN(actual),
-+					       IOMMU_READ | IOMMU_WRITE, GFP_KERNEL))
-+					ipa->smem_iova = phys;
-+			dev_info(ipa->dev, "smem item: phys=%pa size=%zu iova=%lx\n",
-+				 &phys, actual, ipa->smem_iova);
-+		} else {
-+			dev_info(ipa->dev, "smem item not found: %ld\n", PTR_ERR(virt));
-+		}
-+	}
-+
-+	/* Tell the modem the SMEM region already reserved for filter tables */
 +	req.smem_info_valid = 1;
 +	req.smem_info.size = ipa->smem_size;
-+	req.smem_info.start = (u32)ipa->smem_iova;
++	req.smem_info.start = 0;
 +
-+	/* Vendor firmware also expects filter statistics and per-stat SMEM */
++	/* Filter (route) statistics live in the IPA SRAM filter/route stats
++	 * region; 52 counters starting at index 128 are assigned to the
++	 * modem.
++	 */
++	mem = ipa_mem_find(ipa, IPA_MEM_STATS_FILTER_ROUTE);
 +	req.hw_filter_stats_info_valid = 1;
-+	req.hw_filter_stats_info.start_addr = ipa->mem_offset + 0x27c0;
++	req.hw_filter_stats_info.start_addr = ipa->mem_offset + mem->offset;
 +	req.hw_filter_stats_info.size = 52 * 16;
 +	req.hw_filter_stats_info.start_index = 128;
 +	req.hw_filter_stats_info.end_index = 128 + 52 - 1;
 +
++	/* The first 2 KiB of the SMEM item holds peripheral statistics */
 +	req.per_stats_smem_info_valid = 1;
-+	req.per_stats_smem_info.start = (u32)ipa->smem_iova;
++	req.per_stats_smem_info.start = (u32)ipa->smem_phys;
 +	req.per_stats_smem_info.size = 2 * 1024;
 +
  	/* The stats fields are only valid for IPA v4.0+ */
  	if (ipa->version >= IPA_VERSION_4_0) {
  		mem = ipa_mem_find(ipa, IPA_MEM_STATS_QUOTA_MODEM);
 diff --git a/drivers/net/ipa/ipa_qmi_msg.c b/drivers/net/ipa/ipa_qmi_msg.c
-index 51dc13a577a5..d9c1684d37fb 100644
+index 51dc13a577a5..5225b1ca29ba 100644
 --- a/drivers/net/ipa/ipa_qmi_msg.c
 +++ b/drivers/net/ipa/ipa_qmi_msg.c
-@@ -250,6 +250,43 @@ const struct qmi_elem_info ipa_mem_range_ei[] = {
+@@ -169,6 +169,106 @@ const struct qmi_elem_info ipa_driver_init_complete_rsp_ei[] = {
+ 	},
+ };
+ 
++/* QMI message structure definition for a filter handle/index pair, used
++ * within the FILTER_INSTALLED_NOTIF request message
++ */
++static const struct qmi_elem_info ipa_filter_handle_to_index_ei[] = {
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	=
++			sizeof_field(struct ipa_filter_handle_to_index,
++				     filter_handle),
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++		.offset		= offsetof(struct ipa_filter_handle_to_index,
++					   filter_handle),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	=
++			sizeof_field(struct ipa_filter_handle_to_index,
++				     filter_index),
++		.tlv_type	= QMI_COMMON_TLV_TYPE,
++		.offset		= offsetof(struct ipa_filter_handle_to_index,
++					   filter_index),
++	},
++	{
++		.data_type	= QMI_EOTI,
++	},
++};
++
++/* QMI message structure definition for struct ipa_fltr_installed_notif_req
++ * (the FILTER_INSTALLED_NOTIF request sent by the modem).  Only the
++ * mandatory TLVs (0x01, 0x02, 0x03) are described; optional TLVs sent by
++ * the modem are ignored by the QMI decoder.
++ */
++const struct qmi_elem_info ipa_fltr_installed_notif_req_ei[] = {
++	{
++		.data_type	= QMI_UNSIGNED_4_BYTE,
++		.elem_len	= 1,
++		.elem_size	=
++			sizeof_field(struct ipa_fltr_installed_notif_req,
++				     source_pipe_index),
++		.tlv_type	= 0x01,
++		.offset		= offsetof(struct ipa_fltr_installed_notif_req,
++					   source_pipe_index),
++	},
++	{
++		.data_type	= QMI_UNSIGNED_2_BYTE,
++		.elem_len	= 1,
++		.elem_size	=
++			sizeof_field(struct ipa_fltr_installed_notif_req,
++				     install_status),
++		.tlv_type	= 0x02,
++		.offset		= offsetof(struct ipa_fltr_installed_notif_req,
++					   install_status),
++	},
++	{
++		.data_type	= QMI_DATA_LEN,
++		.elem_len	= 1,
++		.elem_size	= sizeof(u8),
++		.tlv_type	= 0x03,
++		.offset		= offsetof(struct ipa_fltr_installed_notif_req,
++					   filter_index_count),
++	},
++	{
++		.data_type	= QMI_STRUCT,
++		.elem_len	= IPA_FILTER_HANDLE_TO_INDEX_MAX,
++		.elem_size	=
++			sizeof_field(struct ipa_fltr_installed_notif_req,
++				     filter_index_list[0]),
++		.array_type	= VAR_LEN_ARRAY,
++		.tlv_type	= 0x03,
++		.offset		= offsetof(struct ipa_fltr_installed_notif_req,
++					   filter_index_list),
++		.ei_array	= ipa_filter_handle_to_index_ei,
++	},
++	{
++		.data_type	= QMI_EOTI,
++	},
++};
++
++/* The response to a IPA_QMI_FILTER_INSTALLED_NOTIF request consists only
++ * of a standard QMI response.
++ */
++const struct qmi_elem_info ipa_fltr_installed_notif_rsp_ei[] = {
++	{
++		.data_type	= QMI_STRUCT,
++		.elem_len	= 1,
++		.elem_size	=
++			sizeof_field(struct ipa_indication_register_rsp,
++				     rsp),
++		.tlv_type	= 0x02,
++		.offset		= offsetof(struct ipa_indication_register_rsp,
++					   rsp),
++		.ei_array	= qmi_response_type_v01_ei,
++	},
++	{
++		.data_type	= QMI_EOTI,
++	},
++};
++
+ /* QMI message structure definition for struct ipa_init_complete_ind */
+ const struct qmi_elem_info ipa_init_complete_ind_ei[] = {
+ 	{
+@@ -250,6 +350,43 @@ const struct qmi_elem_info ipa_mem_range_ei[] = {
  	},
  };
  
@@ -171,7 +392,7 @@ index 51dc13a577a5..d9c1684d37fb 100644
  /* QMI message structure definition for struct ipa_init_modem_driver_req */
  const struct qmi_elem_info ipa_init_modem_driver_req_ei[] = {
  	{
-@@ -640,6 +677,69 @@ const struct qmi_elem_info ipa_init_modem_driver_req_ei[] = {
+@@ -640,6 +777,69 @@ const struct qmi_elem_info ipa_init_modem_driver_req_ei[] = {
  		.offset		= offsetof(struct ipa_init_modem_driver_req,
  					   hw_stats_drop_size),
  	},
@@ -242,10 +463,18 @@ index 51dc13a577a5..d9c1684d37fb 100644
  		.data_type	= QMI_EOTI,
  	},
 diff --git a/drivers/net/ipa/ipa_qmi_msg.h b/drivers/net/ipa/ipa_qmi_msg.h
-index 644b8c27108b..98b10cb79f10 100644
+index 644b8c27108b..d1e726ea9559 100644
 --- a/drivers/net/ipa/ipa_qmi_msg.h
 +++ b/drivers/net/ipa/ipa_qmi_msg.h
-@@ -27,7 +27,7 @@
+@@ -18,6 +18,7 @@
+ #define IPA_QMI_INDICATION_REGISTER	0x20	/* modem -> AP request */
+ #define IPA_QMI_INIT_DRIVER		0x21	/* AP -> modem request */
+ #define IPA_QMI_INIT_COMPLETE		0x22	/* AP -> modem indication */
++#define IPA_QMI_FILTER_INSTALLED_NOTIF	0x24	/* modem -> AP request */
+ #define IPA_QMI_DRIVER_INIT_COMPLETE	0x35	/* modem -> AP request */
+ 
+ /* The maximum size required for message types.  These sizes include
+@@ -27,16 +28,38 @@
   */
  #define IPA_QMI_INDICATION_REGISTER_REQ_SZ	20	/* -> server handle */
  #define IPA_QMI_INDICATION_REGISTER_RSP_SZ	7	/* <- server handle */
@@ -253,8 +482,40 @@ index 644b8c27108b..98b10cb79f10 100644
 +#define IPA_QMI_INIT_DRIVER_REQ_SZ		256	/* client handle -> */
  #define IPA_QMI_INIT_DRIVER_RSP_SZ		25	/* client handle <- */
  #define IPA_QMI_INIT_COMPLETE_IND_SZ		7	/* <- server handle */
++#define IPA_QMI_FILTER_INSTALLED_NOTIF_RSP_SZ	7	/* <- server handle */
  #define IPA_QMI_DRIVER_INIT_COMPLETE_REQ_SZ	4	/* -> server handle */
-@@ -119,6 +119,14 @@ struct ipa_mem_range {
+ #define IPA_QMI_DRIVER_INIT_COMPLETE_RSP_SZ	7	/* <- server handle */
+ 
+ /* Maximum size of messages we expect the AP to receive (max of above) */
+-#define IPA_QMI_SERVER_MAX_RCV_SZ		8
++#define IPA_QMI_SERVER_MAX_RCV_SZ		2048
+ #define IPA_QMI_CLIENT_MAX_RCV_SZ		25
+ 
++/* The maximum number of filters the modem reports as installed; the
++ * list length on the wire is a single byte
++ */
++#define IPA_FILTER_HANDLE_TO_INDEX_MAX		255
++
++/* Request message for the IPA_QMI_FILTER_INSTALLED_NOTIF request, which
++ * the modem sends after installing its filter rules.  The AP must send
++ * a response; a failure to receive one causes the modem to assert.
++ */
++struct ipa_filter_handle_to_index {
++	u32 filter_handle;
++	u32 filter_index;
++};
++
++struct ipa_fltr_installed_notif_req {
++	u32 source_pipe_index;
++	u16 install_status;
++	u32 filter_index_count;		/* element count of filter_index_list */
++	struct ipa_filter_handle_to_index filter_index_list[IPA_FILTER_HANDLE_TO_INDEX_MAX];
++};
++
+ /* Request message for the IPA_QMI_INDICATION_REGISTER request */
+ struct ipa_indication_register_req {
+ 	u8 master_driver_init_complete_valid;
+@@ -119,6 +142,14 @@ struct ipa_mem_range {
  	u32 size;
  };
  
@@ -269,7 +530,7 @@ index 644b8c27108b..98b10cb79f10 100644
  /* The message for the IPA_QMI_INIT_DRIVER request contains information
   * from the AP that affects modem initialization.
   */
-@@ -216,6 +224,18 @@ struct ipa_init_modem_driver_req {
+@@ -216,6 +247,18 @@ struct ipa_init_modem_driver_req {
  	u32			hw_stats_drop_base_addr;
  	u8			hw_stats_drop_size_valid;
  	u32			hw_stats_drop_size;
@@ -288,3 +549,12 @@ index 644b8c27108b..98b10cb79f10 100644
  };
  
  /* The response to a IPA_QMI_INIT_DRIVER request begins with a standard
+@@ -252,6 +295,8 @@ extern const struct qmi_elem_info ipa_indication_register_req_ei[];
+ extern const struct qmi_elem_info ipa_indication_register_rsp_ei[];
+ extern const struct qmi_elem_info ipa_driver_init_complete_req_ei[];
+ extern const struct qmi_elem_info ipa_driver_init_complete_rsp_ei[];
++extern const struct qmi_elem_info ipa_fltr_installed_notif_req_ei[];
++extern const struct qmi_elem_info ipa_fltr_installed_notif_rsp_ei[];
+ extern const struct qmi_elem_info ipa_init_complete_ind_ei[];
+ extern const struct qmi_elem_info ipa_mem_bounds_ei[];
+ extern const struct qmi_elem_info ipa_mem_array_ei[];
